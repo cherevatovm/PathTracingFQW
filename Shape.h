@@ -25,6 +25,8 @@ public:
 	
 	virtual Bounds3 get_bounds() const = 0;
 
+	virtual Vec get_normal(const Vec& hit_point) const = 0;
+
 	virtual Vec shape_sample(double u0, double u1) const = 0;
 };
 
@@ -72,6 +74,10 @@ public:
 
 		return (t1 > eps) ? (0.5 * t1) :
 			((t0 > eps) ? (0.5 * t0) : 0);
+	}
+
+	Vec get_normal(const Vec& hit_point) const override {
+		return (hit_point - p).norm();
 	}
 
 	Bounds3 get_bounds() const override {
