@@ -18,20 +18,37 @@
 
 using namespace std::chrono;
 
+std::vector<Sphere*> light_sources = { 
+	new Sphere(5.5, Vec(50, 81.6 - 15.5, 90), Vec(1, 1, 1) * 40, Vec(), DIFF),
+	//new Sphere(2.75, Vec(70, 81.6 - 30.5, 81.6), Vec(0, 1, 1) * 20,  Vec(), DIFF),
+    //new Sphere(1.375, Vec(20, 81.6 - 20, 81.6), Vec(1, 1, 0) * 40,  Vec(), DIFF)
+};
+
 // radius, position, emission, color, material
 //Sphere objects[] = {
 std::vector<Shape*> objects = {
-  new Sphere(1e5, Vec(1e5 + 1, 40.8, 81.6), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
-  new Sphere(1e5, Vec(-1e5 + 99, 40.8, 81.6), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
-  new Sphere(1e5, Vec(50, 40.8, 1e5), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
-  new Sphere(1e5, Vec(50, 40.8, -1e5 + 170), Vec(), Vec(), DIFF), // Front wall
-  new Sphere(1e5, Vec(50, 1e5, 81.6), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
-  new Sphere(1e5, Vec(50, -1e5 + 81.6, 81.6),Vec(),Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
-  new Sphere(16.5, Vec(73,16.5,95), Vec(), Vec(1, 1, 1), REFR), // Glass sphere
-  new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), DIFF), // Matte sphere 
-  new Sphere(5.5, Vec(50, 81.6 - 15.5, 90), Vec(5, 5, 5) * 10,  Vec(0, 0, 0), DIFF), // Light source
-  //new Sphere(2.5, Vec(70, 81.6 - 30.5, 81.6),Vec(5, 5, 5) * 30,  Vec(5, 0, 0), DIFF), // Light source
-  //new Sphere(1.5, Vec(20, 81.6 - 20, 81.6),Vec(5, 5, 5) * 40,  Vec(0, 0, 5), DIFF) // Light source
+	new Triangle(Vec(0, 0, 170), Vec(0, 82.5, 170), Vec(), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
+	new Triangle(Vec(0, 82.5, 170), Vec(0, 82.5, 0), Vec(), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
+	
+	new Triangle(Vec(99.5, 0, 0), Vec(99.5, 82.5, 0), Vec(99.5, 0, 170), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
+	new Triangle(Vec(99.5, 82.5, 0), Vec(99.5, 82.5, 170), Vec(99.5, 0, 170), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
+	
+	new Triangle(Vec(), Vec(0, 82.5, 0), Vec(99.5, 0, 0), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
+	new Triangle(Vec(0, 82.5, 0), Vec(99.5, 82.5, 0), Vec(99.5, 0, 0), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
+	
+	new Triangle(Vec(0, 0, 170), Vec(0, 82.5, 170), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Front wall
+	new Triangle(Vec(0, 82.5, 170), Vec(99.5, 82.5, 170), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Front wall
+	
+	new Triangle(Vec(0, 0, 170), Vec(), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
+	new Triangle(Vec(), Vec(99.5, 0, 0), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
+
+	new Triangle(Vec(0, 82.5, 0), Vec(0, 82.5, 170), Vec(99.5, 82.5, 0), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
+	new Triangle(Vec(0, 82.5, 170), Vec(99.5, 82.5, 170), Vec(99.5, 82.5, 0), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
+	
+	new Sphere(16.5, Vec(73, 16.5, 95), Vec(), Vec(1, 1, 1), REFR), // Glass sphere
+	new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), DIFF), // Matte sphere 
+	
+	light_sources[0], //light_sources[1], light_sources[2]
 };
 
 
@@ -103,16 +120,14 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 		Vec d = (u * cos(r1) * r2s + v * sin(r1) * r2s + w * sqrt(1 - r2)).norm();
 
 		Vec e;
-		for (int i = 0; i < objects.size(); ++i) {
-			const Shape* obj = objects[i];
-			if (obj->e.x <= 0 && obj->e.y <= 0 && obj->e.z <= 0) continue;
-			const Sphere* sph = dynamic_cast<const Sphere*>(obj);
-
+		int s1 = objects.size(), s2 = light_sources.size();
+		for (int i = 0; i < s2; ++i) {
 			// Create orthonormal coord system and sample direction by solid angle
-			Vec sw = (sph->p - hit_point).norm(), su, sv;
+			Vec sw = (light_sources[i]->p - hit_point).norm(), su, sv;
 			create_orthonorm_sys(sw, su, sv);
 
-			double cos_a_max = sqrt(1 - sph->rad * sph->rad / (hit_point - sph->p).dot_prod(hit_point - sph->p));
+			double cos_a_max = sqrt(1 - light_sources[i]->rad * light_sources[i]->rad / 
+				(hit_point - light_sources[i]->p).dot_prod(hit_point - light_sources[i]->p));
 			double eps1 = erand48(Xi), eps2 = erand48(Xi);
 			double cos_a = 1 - eps1 + eps1 * cos_a_max;
 			double sin_a = sqrt(1 - cos_a * cos_a);
@@ -122,9 +137,9 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 
 			bool is_clear = intersect_scene(Ray(hit_point, samp_dir), t, id);
 			// shoot shadow rays
-			if (is_clear && id == i) {
+			if (is_clear && (id == i + s1 - s2)) {
 				double omega = 2 * M_PI * (1 - cos_a_max);
-				e = e + color.mult(sph->e * samp_dir.dot_prod(nl) * omega) * (1 / M_PI); // 1/PI for BRDF
+				e = e + color.mult(light_sources[i]->e * samp_dir.dot_prod(nl) * omega) * (1 / M_PI); // 1/PI for BRDF
 			}
 		}
 
@@ -185,7 +200,7 @@ int main(int argc, char* argv[]) {
 #pragma omp parallel for schedule(dynamic, 1) private(result)       // Use OpenMP 
 	for (int y = 0; y < height; y++) {                       // Go through image rows 
 		fprintf(stderr, "\rRendering (%d samples per pixel): %5.2f%%", samples * 4, 100.0 * y / (height - 1));
-		for (unsigned short x = 0, Xi[3] = { 0,0,y * y * y }; x < width; x++) // Go through image cols 
+		for (unsigned short x = 0, Xi[3] = { 0, 0, y * y * y }; x < width; x++) // Go through image cols 
 			// 2x2 subpixel rows 
 			for (int sy = 0, i = (height - y - 1) * width + x; sy < 2; sy++)
 				// 2x2 subpixel cols 
