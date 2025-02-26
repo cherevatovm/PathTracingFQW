@@ -6,20 +6,21 @@
 #include "Bounds.h"
 #include "Transform.h"
 
+const double eps = 1e-5;
 enum Refl_type { DIFF, SPEC, REFR };
 
 class Shape {
 public:
-	Vec e, c;
+	Vec emis, color;
 	Refl_type refl;
 	const Transform* render_obj, *obj_render;
 
 	Shape() = default;
 
-	Shape(const Vec& e_, const Vec& c_, Refl_type refl_,
+	Shape(const Vec& emis_, const Vec& color_, Refl_type refl_,
 		const Transform* render_obj_ = nullptr, 
 		const Transform* obj_render_ = nullptr) :
-		e(e_), c(c_), refl(refl_), render_obj(render_obj_), obj_render(obj_render_) {};
+		emis(emis_), color(color_), refl(refl_), render_obj(render_obj_), obj_render(obj_render_) {};
 
 	virtual double intersect(const Ray& r) const = 0;
 	
@@ -32,23 +33,24 @@ public:
 
 class Sphere : public Shape {
 public:
-	Vec p;
-	double rad;
+	Vec center;
+	double radius;
 
 	Sphere() = default;
 
-	Sphere(double rad_, Vec p_, 
-		Vec e_, Vec c_, Refl_type refl_,
+	Sphere(double radius_, Vec center_, 
+		Vec emis_, Vec color_, Refl_type refl_,
 		const Transform* render_obj_ = nullptr, 
-		const Transform* obj_render_ = nullptr) : Shape(e_, c_, refl_, render_obj_, obj_render_),
-		rad(rad_), p(p_) {};
+		const Transform* obj_render_ = nullptr) : Shape(emis_, color_, refl_, render_obj_, obj_render_),
+		radius(radius_), center(center_) {};
 	
 	/*
-	double intersect(const Ray& r) const override { // returns distance, 0 if there is no hit 
-		Vec op = p - r.orig; // Solve t^2*d.d + 2*t*(o-p).d + (o-p).(o-p)-R^2 = 0 
+	// Returns distance or 0 if there is no hit
+	double intersect(const Ray& r) const override {
+		Vec op = p - r.orig; // Solve t^2 * d.d + 2 * t * (o - p).d + (o - p).(o - p) - R^2 = 0 
 		double t, eps = 1e-4,
 			b = op.dot_prod(r.dir),
-			det = b * b - op.dot_prod(op) + rad * rad;
+			det = b * b - op.dot_prod(op) + radius * radius;
 
 		if (det < 0) return 0;
 		else det = sqrt(det);
@@ -59,9 +61,9 @@ public:
 	*/
 
 	Sphere& operator=(const Sphere& sph) {
-		p = sph.p;
-		rad = sph.rad;
-		e = sph.e; c = sph.c;
+		center = sph.center;
+		radius = sph.radius;
+		emis = sph.emis; color = sph.color;
 		refl = sph.refl;
 		render_obj = sph.render_obj;
 		obj_render = sph.obj_render;
@@ -70,10 +72,9 @@ public:
 
 	// Returns distance or 0 if there is no hit 
 	double intersect(const Ray& r) const override {
-		Vec op = r.orig - p; // Solve t^2 * d.d + 2 * t * (o - p).d + (o - p).(o - p) - R^2 = 0 
-		double eps = 1e-4;
+		Vec op = r.orig - center; // Solve t^2 * d.d + 2 * t * (o - p).d + (o - p).(o - p) - R^2 = 0
 		double b = 2 * (op).dot_prod(r.dir);
-		double c = op.dot_prod(op) - rad * rad;
+		double c = op.dot_prod(op) - radius * radius;
 		double discr = b * b - 4 * c;
 
 		if (discr < 0) return 0;
@@ -87,13 +88,13 @@ public:
 	}
 
 	Vec get_normal(const Vec& hit_point) const override {
-		return (hit_point - p).norm();
+		return (hit_point - center).norm();
 	}
 
 	Bounds3 get_bounds() const override {
 		return //render_obj->transform_bounds(Bounds3(
-			Bounds3(Vec(p.x - rad, p.y - rad, p.z - rad), 
-			Vec(p.x + rad, p.y + rad, p.z + rad));
+			Bounds3(Vec(center.x - radius, center.y - radius, center.z - radius), 
+			Vec(center.x + radius, center.y + radius, center.z + radius));
 	}
 
 	Vec shape_sample(double u0, double u1) const override {
@@ -108,13 +109,13 @@ public:
 
 	Triangle() = default;
 
-	Triangle(Vec v1_, Vec v2_, Vec v3_,
-		Vec e_, Vec c_, Refl_type refl_,
+	Triangle(Vec vert1_, Vec vert2_, Vec vert3_,
+		Vec emis_, Vec color_, Refl_type refl_,
 		const Transform* render_obj_ = nullptr,
 		const Transform* obj_render_ = nullptr) : 
-		Shape(e_, c_, refl_, render_obj_, obj_render_),
-		vert1(v1_), vert2(v2_), vert3(v3_),
-		normal(((v2_ - v1_) % (v3_ - v1_)).norm()) {
+		Shape(emis_, color_, refl_, render_obj_, obj_render_),
+		vert1(vert1_), vert2(vert2_), vert3(vert3_),
+		normal(((vert2_ - vert1_) % (vert3_ - vert1_)).norm()) {
 	}
 
 	Triangle& operator=(const Triangle& t) {
@@ -122,7 +123,7 @@ public:
 		vert2 = t.vert2;
 		vert3 = t.vert3;
 		normal = t.normal;
-		e = t.e; c = t.c;
+		emis = t.emis; color = t.color;
 		refl = t.refl;
 		render_obj = t.render_obj;
 		obj_render = t.obj_render;
@@ -130,8 +131,6 @@ public:
 	}
 
 	double intersect(const Ray& r) const override {
-		const double eps = 0.00001;
-
 		double denominator = normal.dot_prod(r.dir);
 		if (fabs(denominator) < eps)
 			return 0;
@@ -173,6 +172,49 @@ public:
 
 	Vec shape_sample(double u0, double u1) const override {
 		return Vec();
+	}
+};
+
+class Hexahedron {
+public:
+	std::vector<Triangle*> faces;
+
+	Hexahedron(
+		Vec center_,
+		double radius_,
+		double alpha_,
+		Vec emis_, Vec color_,
+		Refl_type refl_) {
+		Vec p1{ center_.x + radius_, center_.y + radius_, center_.z + radius_ };
+		Vec p7{ center_.x - radius_, center_.y - radius_, center_.z - radius_ };
+		Vec p2{ p1.x, p1.y, p7.z };
+		Vec p3{ p7.x, p1.y, p7.z };
+		Vec p4{ p7.x, p1.y, p1.z };
+		Vec p5{ p1.x, p7.y, p1.z };
+		Vec p6{ p1.x, p7.y, p7.z };
+		Vec p8{ p7.x, p7.y, p1.z };
+
+		p1.rotate_y(alpha_, center_);
+		p2.rotate_y(alpha_, center_);
+		p3.rotate_y(alpha_, center_);
+		p4.rotate_y(alpha_, center_);
+		p5.rotate_y(alpha_, center_);
+		p6.rotate_y(alpha_, center_);
+		p7.rotate_y(alpha_, center_);
+		p8.rotate_y(alpha_, center_);
+
+		faces.push_back(new Triangle(p1, p2, p3, emis_, color_, refl_));
+		faces.push_back(new Triangle(p3, p4, p1, emis_, color_, refl_));
+		faces.push_back(new Triangle(p8, p7, p6, emis_, color_, refl_));
+		faces.push_back(new Triangle(p6, p5, p8, emis_, color_, refl_));
+		faces.push_back(new Triangle(p2, p6, p7, emis_, color_, refl_));
+		faces.push_back(new Triangle(p7, p3, p2, emis_, color_, refl_));
+		faces.push_back(new Triangle(p1, p5, p6, emis_, color_, refl_));
+		faces.push_back(new Triangle(p6, p2, p1, emis_, color_, refl_));
+		faces.push_back(new Triangle(p8, p7, p3, emis_, color_, refl_));
+		faces.push_back(new Triangle(p3, p4, p8, emis_, color_, refl_));
+		faces.push_back(new Triangle(p1, p4, p8, emis_, color_, refl_));
+		faces.push_back(new Triangle(p8, p5, p1, emis_, color_, refl_));
 	}
 };
 

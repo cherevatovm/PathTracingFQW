@@ -35,6 +35,15 @@ struct Vec {
 			std::max(v1.y, v2.y),
 			std::max(v1.z, v2.z));
 	}
+
+	void rotate_y(double alpha, const Vec& center) {
+		double xc = x - center.x;
+		double zc = z - center.z;
+		double nx = xc * cos(alpha) - zc * sin(alpha);
+		x = nx + center.x;
+		double nz = xc * sin(alpha) + zc * cos(alpha);
+		z = nz + center.z;
+	}
 };
 
 inline double clamp(double val, double low, double high) {

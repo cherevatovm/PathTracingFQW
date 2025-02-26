@@ -44,13 +44,19 @@ std::vector<Shape*> objects = {
 
 	new Triangle(Vec(0, 82.5, 0), Vec(0, 82.5, 170), Vec(99.5, 82.5, 0), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
 	new Triangle(Vec(0, 82.5, 170), Vec(99.5, 82.5, 170), Vec(99.5, 82.5, 0), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
-	
-	new Sphere(16.5, Vec(73, 16.5, 95), Vec(), Vec(1, 1, 1), REFR), // Glass sphere
-	new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), DIFF), // Matte sphere 
-	
-	light_sources[0], //light_sources[1], light_sources[2]
 };
 
+void fill_scene() {
+	Sphere* s1 = new Sphere(16.5, Vec(73, 16.5, 95), Vec(), Vec(1, 1, 1), REFR); // Glass sphere
+	objects.push_back(s1);
+	//Sphere* s2 = new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), DIFF); // Matte sphere 
+	//objects.push_back(s2);
+	Hexahedron h1(Vec(33, 15, 65), 15, M_PI / 4, Vec(), Vec(0.65, 0.65, 0.65), SPEC);
+	for (Triangle* f : h1.faces)
+		objects.push_back(f);
+	for (Sphere* l_s : light_sources)
+		objects.push_back(l_s);
+}
 
 void create_orthonorm_sys(const Vec& v1, Vec& v2, Vec& v3) {
 	// Projection to y = 0 plane and normalized orthogonal vector construction
@@ -98,7 +104,7 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 	Vec hit_point = r.orig + r.dir * t;
 	Vec n = hit_obj->get_normal(hit_point);
 	Vec nl = n.dot_prod(r.dir) < 0 ? n : n * -1;
-	Vec color = hit_obj->c;
+	Vec color = hit_obj->color;
 	double rr_prob = std::max(color.x, std::max(color.y, color.z));
 
 	// Russian Roulette for path termination
@@ -106,7 +112,7 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 		if (erand48(Xi) < rr_prob)
 			color = color * (1 / rr_prob);
 		else
-			return hit_obj->e * E;
+			return hit_obj->emis * E;
 	}
 
 	// Diffuse BRDF
@@ -123,11 +129,11 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 		int s1 = objects.size(), s2 = light_sources.size();
 		for (int i = 0; i < s2; ++i) {
 			// Create orthonormal coord system and sample direction by solid angle
-			Vec sw = (light_sources[i]->p - hit_point).norm(), su, sv;
+			Vec sw = (light_sources[i]->center - hit_point).norm(), su, sv;
 			create_orthonorm_sys(sw, su, sv);
 
-			double cos_a_max = sqrt(1 - light_sources[i]->rad * light_sources[i]->rad / 
-				(hit_point - light_sources[i]->p).dot_prod(hit_point - light_sources[i]->p));
+			double cos_a_max = sqrt(1 - light_sources[i]->radius * light_sources[i]->radius / 
+				(hit_point - light_sources[i]->center).dot_prod(hit_point - light_sources[i]->center));
 			double eps1 = erand48(Xi), eps2 = erand48(Xi);
 			double cos_a = 1 - eps1 + eps1 * cos_a_max;
 			double sin_a = sqrt(1 - cos_a * cos_a);
@@ -139,15 +145,15 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 			// shoot shadow rays
 			if (is_clear && (id == i + s1 - s2)) {
 				double omega = 2 * M_PI * (1 - cos_a_max);
-				e = e + color.mult(light_sources[i]->e * samp_dir.dot_prod(nl) * omega) * (1 / M_PI); // 1/PI for BRDF
+				e = e + color.mult(light_sources[i]->emis * samp_dir.dot_prod(nl) * omega) * (1 / M_PI); // 1/PI for BRDF
 			}
 		}
 
-		return hit_obj->e * E + e + color.mult(path_tracing(Ray(hit_point, d), depth, Xi, 0));
+		return hit_obj->emis * E + e + color.mult(path_tracing(Ray(hit_point, d), depth, Xi, 0));
 	}
 	// Specular BRDF
 	else if (hit_obj->refl == SPEC)
-		return hit_obj->e + color.mult(path_tracing(Ray(hit_point, r.dir - n * n.dot_prod(r.dir) * 2), depth, Xi)); // Angle of incidence == angle of reflection
+		return hit_obj->emis + color.mult(path_tracing(Ray(hit_point, r.dir - n * n.dot_prod(r.dir) * 2), depth, Xi)); // Angle of incidence == angle of reflection
 
 	// Refractive BRDF
 	Ray refl_ray(hit_point, r.dir - n * n.dot_prod(r.dir) * 2);
@@ -158,7 +164,7 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 	double cos2t = 1 - refr_ratio * refr_ratio * (1 - cos_incid_angle * cos_incid_angle);
 
 	if (cos2t < 0) 
-		return hit_obj->e + color.mult(path_tracing(refl_ray, depth, Xi)); // Total internal reflection 
+		return hit_obj->emis + color.mult(path_tracing(refl_ray, depth, Xi)); // Total internal reflection 
 
 	Vec tdir = (r.dir * refr_ratio - n * ((into ? 1 : -1) * (cos_incid_angle * refr_ratio + sqrt(cos2t)))).norm();
 	double a = refr_ind2 - refr_ind1;
@@ -183,7 +189,7 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 	else
 		result = path_tracing(refl_ray, depth, Xi) * Fr + path_tracing(Ray(hit_point, tdir), depth, Xi) * Tr;
 
-	return hit_obj->e + color.mult(result);
+	return hit_obj->emis + color.mult(result);
 }
 
 int main(int argc, char* argv[]) {
@@ -195,6 +201,8 @@ int main(int argc, char* argv[]) {
 	Ray camera(Vec(50, 52, 295.6), Vec(0, -0.042612, -1).norm()); 
 	Vec camera_x = Vec(width * 0.5135 / height),
 	camera_y = (camera_x % camera.dir).norm() * 0.5135;
+
+	fill_scene();
 
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
 #pragma omp parallel for schedule(dynamic, 1) private(result)       // Use OpenMP 
@@ -216,7 +224,7 @@ int main(int argc, char* argv[]) {
 				}
 	}
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
-	printf("\nВремя работы: %d ms;\n", std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+	printf("\nTime elapsed: %d ms;\n", std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
 
 	for (int i = 0; i < objects.size(); ++i)
 		delete(objects[i]);
