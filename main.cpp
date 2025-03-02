@@ -1,6 +1,11 @@
 ﻿#define _CRT_SECURE_NO_WARNINGS
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #define _USE_MATH_DEFINES
+#include "stb_image_write.h"
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+#include <GLFW/glfw3.h>
 #include <iostream>
 #include <math.h>
 #include <stdlib.h>
@@ -14,14 +19,20 @@
 #include "Ray.h"
 #include "Shape.h"
 #include "Rand_om.h"
-#include "stb_image_write.h"
 
 using namespace std::chrono;
 
-std::vector<Sphere*> light_sources = { 
+static void glfw_error_callback(int error, const char* description) {
+	fprintf(stderr, "Glfw Error %d: %s\n", error, description);
+}
+
+int width = 1024, height = 768, samples;
+Vec* image = new Vec[width * height];
+
+std::vector<Sphere*> light_sources = {
 	new Sphere(5.5, Vec(50, 81.6 - 15.5, 90), Vec(1, 1, 1) * 40, Vec(), DIFF),
 	//new Sphere(2.75, Vec(70, 81.6 - 30.5, 81.6), Vec(0, 1, 1) * 20,  Vec(), DIFF),
-    //new Sphere(1.375, Vec(20, 81.6 - 20, 81.6), Vec(1, 1, 0) * 40,  Vec(), DIFF)
+	//new Sphere(1.375, Vec(20, 81.6 - 20, 81.6), Vec(1, 1, 0) * 40,  Vec(), DIFF)
 };
 
 // radius, position, emission, color, material
@@ -29,16 +40,16 @@ std::vector<Sphere*> light_sources = {
 std::vector<Shape*> objects = {
 	new Triangle(Vec(0, 0, 170), Vec(0, 82.5, 170), Vec(), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
 	new Triangle(Vec(0, 82.5, 170), Vec(0, 82.5, 0), Vec(), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
-	
+
 	new Triangle(Vec(99.5, 0, 0), Vec(99.5, 82.5, 0), Vec(99.5, 0, 170), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
 	new Triangle(Vec(99.5, 82.5, 0), Vec(99.5, 82.5, 170), Vec(99.5, 0, 170), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
-	
+
 	new Triangle(Vec(), Vec(0, 82.5, 0), Vec(99.5, 0, 0), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
 	new Triangle(Vec(0, 82.5, 0), Vec(99.5, 82.5, 0), Vec(99.5, 0, 0), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
-	
+
 	new Triangle(Vec(0, 0, 170), Vec(0, 82.5, 170), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Front wall
 	new Triangle(Vec(0, 82.5, 170), Vec(99.5, 82.5, 170), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Front wall
-	
+
 	new Triangle(Vec(0, 0, 170), Vec(), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
 	new Triangle(Vec(), Vec(99.5, 0, 0), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
 
@@ -51,9 +62,11 @@ void fill_scene() {
 	objects.push_back(s1);
 	//Sphere* s2 = new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), DIFF); // Matte sphere 
 	//objects.push_back(s2);
+	/*
 	Hexahedron h1(Vec(33, 15, 65), 15, M_PI / 4, Vec(), Vec(0.65, 0.65, 0.65), SPEC);
 	for (Triangle* f : h1.faces)
 		objects.push_back(f);
+	*/
 	for (Sphere* l_s : light_sources)
 		objects.push_back(l_s);
 }
@@ -81,6 +94,26 @@ Vec sample_hemisphere(double u1, double u2) {
 inline double clamp01(double x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
 inline int to_int(double x) { return int(pow(clamp01(x), 1 / 2.2) * 255 + 0.5); }
 
+GLuint create_texture() {
+	auto* pixels = new unsigned char[width * height * 3];
+	for (int i = 0; i < width * height; ++i) {
+		pixels[i * 3] = to_int(image[i].x);
+		pixels[i * 3 + 1] = to_int(image[i].y);
+		pixels[i * 3 + 2] = to_int(image[i].z);
+	}
+
+	GLuint texture_id;
+	glGenTextures(1, &texture_id);
+	glBindTexture(GL_TEXTURE_2D, texture_id);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+	delete[] pixels;
+
+	return texture_id;
+}
+
 inline bool intersect_scene(const Ray& r, double& t, int& id) {
 	double d;
 	double inf = t = LDBL_MAX;
@@ -94,7 +127,7 @@ inline bool intersect_scene(const Ray& r, double& t, int& id) {
 }
 
 Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
- 	if (depth > 100) return Vec();
+	if (depth > 100) return Vec();
 
 	double t; // Distance to intersection 
 	int id = 0; // ID of intersected object 
@@ -132,7 +165,7 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 			Vec sw = (light_sources[i]->center - hit_point).norm(), su, sv;
 			create_orthonorm_sys(sw, su, sv);
 
-			double cos_a_max = sqrt(1 - light_sources[i]->radius * light_sources[i]->radius / 
+			double cos_a_max = sqrt(1 - light_sources[i]->radius * light_sources[i]->radius /
 				(hit_point - light_sources[i]->center).dot_prod(hit_point - light_sources[i]->center));
 			double eps1 = erand48(Xi), eps2 = erand48(Xi);
 			double cos_a = 1 - eps1 + eps1 * cos_a_max;
@@ -163,7 +196,7 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 	double cos_incid_angle = r.dir.dot_prod(nl);
 	double cos2t = 1 - refr_ratio * refr_ratio * (1 - cos_incid_angle * cos_incid_angle);
 
-	if (cos2t < 0) 
+	if (cos2t < 0)
 		return hit_obj->emis + color.mult(path_tracing(refl_ray, depth, Xi)); // Total internal reflection 
 
 	Vec tdir = (r.dir * refr_ratio - n * ((into ? 1 : -1) * (cos_incid_angle * refr_ratio + sqrt(cos2t)))).norm();
@@ -192,23 +225,25 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 	return hit_obj->emis + color.mult(result);
 }
 
-int main(int argc, char* argv[]) {
-	setlocale(LC_ALL, "RUSSIAN");
-
-	int width = 1024, height = 768, samples = 32 / 4;
-	Vec* image = new Vec[width * height], result;
-	
-	Ray camera(Vec(50, 52, 295.6), Vec(0, -0.042612, -1).norm()); 
+void render_scene() {
+	Vec result;
+	Ray camera(Vec(50, 52, 295.6), Vec(0, -0.042612, -1).norm());
 	Vec camera_x = Vec(width * 0.5135 / height),
-	camera_y = (camera_x % camera.dir).norm() * 0.5135;
-
-	fill_scene();
-
-	high_resolution_clock::time_point t1 = high_resolution_clock::now();
+		camera_y = (camera_x % camera.dir).norm() * 0.5135;
+	const int bar_width = 50; // Ширина полосы прогресса
 #pragma omp parallel for schedule(dynamic, 1) private(result)       // Use OpenMP 
 	for (int y = 0; y < height; y++) {                       // Go through image rows 
-		fprintf(stderr, "\rRendering (%d samples per pixel): %5.2f%%", samples * 4, 100.0 * y / (height - 1));
-		for (unsigned short x = 0, Xi[3] = { 0, 0, y * y * y }; x < width; x++) // Go through image cols 
+#pragma omp critical
+		{
+			float percent = 100.0f * y / (height - 1);
+			int filled = static_cast<int>(percent * bar_width / 100.0f);
+			filled = std::max(0, std::min(bar_width, filled));
+			std::string bar(filled, '=');
+			bar.append(bar_width - filled, ' ');
+			fprintf(stderr, "\rRendering (%d samples per pixel): [%s] %5.2f%%", samples * 4, bar.c_str(), percent);
+			fflush(stderr);
+		}
+		for (unsigned short x = 0, Xi[3] = { 0, 0, y * y * y }; x < width; x++) { // Go through image cols 
 			// 2x2 subpixel rows 
 			for (int sy = 0, i = (height - y - 1) * width + x; sy < 2; sy++)
 				// 2x2 subpixel cols 
@@ -222,20 +257,75 @@ int main(int argc, char* argv[]) {
 					}
 					image[i] = image[i] + Vec(clamp01(result.x), clamp01(result.y), clamp01(result.z)) * 0.25;
 				}
+		}
 	}
+
+}
+
+int main() {
+	setlocale(LC_ALL, "RUSSIAN");
+	while (true) {
+		std::cout << "Введите число выборок на пиксель (должно быть >= 4): ";
+		std::cin >> samples;
+		if (samples >= 4) {
+			samples /= 4;
+			break;
+		}
+		else
+			std::cout << "Указано некорректное значение.\n" << std::endl;
+	}
+
+	fill_scene();
+	high_resolution_clock::time_point t1 = high_resolution_clock::now();
+	render_scene();
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	printf("\nTime elapsed: %d ms;\n", std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
 
-	for (int i = 0; i < objects.size(); ++i)
-		delete(objects[i]);
+	glfwSetErrorCallback(glfw_error_callback);
+	if (!glfwInit())
+		return -1;
+	glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+	GLFWwindow* window = glfwCreateWindow(width + 15, height + 35, "Path Tracing", NULL, NULL);
+	if (window == NULL)
+		return -1;
+	glfwMakeContextCurrent(window);
+	glfwSwapInterval(1);
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO(); (void)io;
+	ImGui::StyleColorsDark();
+	ImGui_ImplGlfw_InitForOpenGL(window, true);
+	ImGui_ImplOpenGL3_Init("#version 130");
 
-	// Save the result to png image
-	auto* res_image = new unsigned char[width * height * 3];
-	for (int i = 0; i < width * height; i++) {
-		res_image[i * 3] = to_int(image[i].x);
-		res_image[i * 3 + 1] = to_int(image[i].y);
-		res_image[i * 3 + 2] = to_int(image[i].z);
+	GLuint texture_id = create_texture();
+
+	while (!glfwWindowShouldClose(window)) {
+		glfwPollEvents();
+		ImGui_ImplOpenGL3_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
+		ImGui::NewFrame();
+
+		ImGui::SetNextWindowPos({ 0, 0 });
+		ImGui::SetNextWindowSize({ io.DisplaySize.x, io.DisplaySize.y });
+		ImGui::Begin("Rendered image", (bool*)0, ImGuiWindowFlags_NoResize |
+			ImGuiWindowFlags_NoCollapse);
+		ImGui::Image((void*)(intptr_t)texture_id, ImVec2(width, height));
+		ImGui::End();
+
+		ImGui::Render();
+		int display_w, display_h;
+		glfwGetFramebufferSize(window, &display_w, &display_h);
+		glViewport(0, 0, display_w, display_h);
+		glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+		glfwSwapBuffers(window);
 	}
 
-	stbi_write_png("result.png", width, height, 3, res_image, width * 3);
+	ImGui_ImplOpenGL3_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
+	ImGui::DestroyContext();
+	glfwDestroyWindow(window);
+	glfwTerminate();
+	return 0;
 }
