@@ -5,6 +5,7 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <math.h>
@@ -19,6 +20,7 @@
 #include "Ray.h"
 #include "Shape.h"
 #include "Rand_om.h"
+#include "ImFileDialog/ImFileDialog.h"
 
 using namespace std::chrono;
 
@@ -27,7 +29,8 @@ static void glfw_error_callback(int error, const char* description) {
 }
 
 int width = 1024, height = 768, samples;
-Vec* image = new Vec[width * height];
+Vec* image;
+std::string ui_text = "";
 
 std::vector<Sphere*> light_sources = {
 	new Sphere(5.5, Vec(50, 81.6 - 15.5, 90), Vec(1, 1, 1) * 40, Vec(), DIFF),
@@ -60,8 +63,8 @@ std::vector<Shape*> objects = {
 void fill_scene() {
 	Sphere* s1 = new Sphere(16.5, Vec(73, 16.5, 95), Vec(), Vec(1, 1, 1), REFR); // Glass sphere
 	objects.push_back(s1);
-	//Sphere* s2 = new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), DIFF); // Matte sphere 
-	//objects.push_back(s2);
+	Sphere* s2 = new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(0.9 , 0.9, 0.9), SPEC); // Matte sphere 
+	objects.push_back(s2);
 	/*
 	Hexahedron h1(Vec(33, 15, 65), 15, M_PI / 4, Vec(), Vec(0.65, 0.65, 0.65), SPEC);
 	for (Triangle* f : h1.faces)
@@ -230,7 +233,7 @@ void render_scene() {
 	Ray camera(Vec(50, 52, 295.6), Vec(0, -0.042612, -1).norm());
 	Vec camera_x = Vec(width * 0.5135 / height),
 		camera_y = (camera_x % camera.dir).norm() * 0.5135;
-	const int bar_width = 50; // Ширина полосы прогресса
+	const int bar_width = 50; // Progress bat width
 #pragma omp parallel for schedule(dynamic, 1) private(result)       // Use OpenMP 
 	for (int y = 0; y < height; y++) {                       // Go through image rows 
 #pragma omp critical
@@ -265,16 +268,26 @@ void render_scene() {
 int main() {
 	setlocale(LC_ALL, "RUSSIAN");
 	while (true) {
-		std::cout << "Введите число выборок на пиксель (должно быть >= 4): ";
+		std::cout << "Enter image resolution (in the format 'width height', both values must be >= 100):\n";
+		std::cin >> width;
+		std::cin >> height;
+		if (width >= 100 && height >= 100)
+			break;
+		else
+			std::cout << "Entered incorrect resolution value.\n" << std::endl;
+	}
+	while (true) {
+		std::cout << "Enter number of samples per pixel (must be >= 4): ";
 		std::cin >> samples;
 		if (samples >= 4) {
 			samples /= 4;
 			break;
 		}
 		else
-			std::cout << "Указано некорректное значение.\n" << std::endl;
+			std::cout << "Entered incorrect samples per pixel value.\n" << std::endl;
 	}
-
+	
+	image = new Vec[width * height];
 	fill_scene();
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
 	render_scene();
@@ -285,11 +298,19 @@ int main() {
 	if (!glfwInit())
 		return -1;
 	glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
-	GLFWwindow* window = glfwCreateWindow(width + 15, height + 35, "Path Tracing", NULL, NULL);
+	int win_width = width < 1024 ? 1024 : width + 15; 
+	int win_height = height < 768 ? 768 : height + 77;
+	GLFWwindow* window = glfwCreateWindow(win_width, win_height, "Path Tracing", NULL, NULL);
 	if (window == NULL)
 		return -1;
 	glfwMakeContextCurrent(window);
 	glfwSwapInterval(1);
+	glewExperimental = true;
+	if (glewInit() != GLEW_OK) {
+		printf("Failed to initialize GLEW\n");
+		return 0;
+	}
+
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO(); (void)io;
@@ -297,7 +318,35 @@ int main() {
 	ImGui_ImplGlfw_InitForOpenGL(window, true);
 	ImGui_ImplOpenGL3_Init("#version 130");
 
-	GLuint texture_id = create_texture();
+	// ImFileDialog requires you to set the CreateTexture and DeleteTexture
+	ifd::FileDialog::Instance().CreateTexture = [](uint8_t* data, int w, int h, char fmt) -> void* {
+		GLuint tex;
+
+		glGenTextures(1, &tex);
+		glBindTexture(GL_TEXTURE_2D, tex);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, (fmt == 0) ? GL_BGRA : GL_RGBA, GL_UNSIGNED_BYTE, data);
+		glGenerateMipmap(GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, 0);
+
+		return (void*)tex;
+	};	
+	ifd::FileDialog::Instance().DeleteTexture = [](void* tex) {
+		GLuint texID = (GLuint)tex;
+		glDeleteTextures(1, &texID);
+	};
+
+	GLuint tex_id = create_texture();
+	// Save the result to png image
+	auto* res_image = new unsigned char[width * height * 3];
+	for (int i = 0; i < width * height; i++) {
+		res_image[i * 3] = to_int(image[i].x);
+		res_image[i * 3 + 1] = to_int(image[i].y);
+		res_image[i * 3 + 2] = to_int(image[i].z);
+	}
 
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
@@ -309,8 +358,32 @@ int main() {
 		ImGui::SetNextWindowSize({ io.DisplaySize.x, io.DisplaySize.y });
 		ImGui::Begin("Rendered image", (bool*)0, ImGuiWindowFlags_NoResize |
 			ImGuiWindowFlags_NoCollapse);
-		ImGui::Image((void*)(intptr_t)texture_id, ImVec2(width, height));
+		ImGui::SetCursorPos(ImVec2(8, 27));
+		if (ImGui::Button("Save image", ImVec2(150, 40))) {
+			ifd::FileDialog::Instance().Save("ImageSaveDialog", "Save an image", "*.png;*.jpg {.png,.jpg}");
+		}
+		ImGui::SetCursorPos(ImVec2(165, 53));
+		ImGui::Text("%s", ui_text.c_str());
+		ImGui::SetCursorPos(ImVec2(8, 75));
+		ImGui::Image((void*)(intptr_t)tex_id, ImVec2(width, height));
 		ImGui::End();
+
+		// File dialog
+		if (ifd::FileDialog::Instance().IsDone("ImageSaveDialog")) {
+			ui_text = "";
+			if (ifd::FileDialog::Instance().HasResult()) {
+				std::string res = ifd::FileDialog::Instance().GetResult().string();
+				std::string ext = res.substr(res.length() - 3);
+				ui_text = "Image has been saved.";
+				if (ext == "png")
+					stbi_write_png(res.c_str(), width, height, 3, res_image, width * 3);
+				else if (ext == "jpg")
+					stbi_write_jpg(res.c_str(), width, height, 3, res_image, 100);
+				else
+					ui_text = "";
+			}
+			ifd::FileDialog::Instance().Close();
+		}
 
 		ImGui::Render();
 		int display_w, display_h;
