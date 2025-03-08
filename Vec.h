@@ -8,8 +8,20 @@ struct Vec {
 	Vec(double x_ = 0, double y_ = 0, double z_ = 0): x(x_), y(y_), z(z_) {}
 	
 	Vec operator+(const Vec& v) const { return Vec(x + v.x, y + v.y, z + v.z); }
+	Vec& operator+=(const Vec& v) {
+		x += v.x;
+		y += v.y;
+		z += v.z;
+		return *this;
+	}
 	Vec operator-(const Vec& v) const { return Vec(x - v.x, y - v.y, z - v.z); }
 	Vec operator*(double scalar) const { return Vec(x * scalar, y * scalar, z * scalar); }
+	Vec& operator*=(double scalar) {
+		x *= scalar;
+		y *= scalar;
+		z *= scalar;
+		return *this;
+	}
 	Vec operator%(const Vec& v) const { return Vec(y * v.z - z * v.y, z * v.x - x * v.z, x * v.y - y * v.x); }
 	double operator[](int i) const { return (i == 0) ? x : (i == 1) ? y : z; }
 	double dot_prod(const Vec& v) const { return x * v.x + y * v.y + z * v.z; }

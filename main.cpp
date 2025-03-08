@@ -60,16 +60,22 @@ std::vector<Shape*> objects = {
 	new Triangle(Vec(0, 82.5, 170), Vec(99.5, 82.5, 170), Vec(99.5, 82.5, 0), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
 };
 
+std::vector<Mesh*> meshes;
+
 void fill_scene() {
 	Sphere* s1 = new Sphere(16.5, Vec(73, 16.5, 95), Vec(), Vec(1, 1, 1), REFR); // Glass sphere
 	objects.push_back(s1);
-	Sphere* s2 = new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(0.9 , 0.9, 0.9), SPEC); // Matte sphere 
-	objects.push_back(s2);
-	/*
-	Hexahedron h1(Vec(33, 15, 65), 15, M_PI / 4, Vec(), Vec(0.65, 0.65, 0.65), SPEC);
-	for (Triangle* f : h1.faces)
+	//Sphere* s2 = new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(0.9 , 0.9, 0.9), SPEC); // Matte sphere 
+	//objects.push_back(s2);
+
+	Mesh* m = Mesh::create_hexahedron(Vec(33, 15, 65), 15, M_PI / 4, Vec(0.65, 0.65, 0.65), SPEC);
+	meshes.push_back(m);
+	//Hexahedron h1(Vec(33, 15, 65), 15, M_PI / 4, Vec(), Vec(0.65, 0.65, 0.65), SPEC);
+	//for (Triangle* f : h1.faces)
+		//objects.push_back(f);
+	for (auto* f : m->faces)
 		objects.push_back(f);
-	*/
+
 	for (Sphere* l_s : light_sources)
 		objects.push_back(l_s);
 }
@@ -297,9 +303,8 @@ int main() {
 	glfwSetErrorCallback(glfw_error_callback);
 	if (!glfwInit())
 		return -1;
-	glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
 	int win_width = width < 1024 ? 1024 : width + 15; 
-	int win_height = height < 768 ? 768 : height + 77;
+	int win_height = height < 768 ? 768 : height + 84;
 	GLFWwindow* window = glfwCreateWindow(win_width, win_height, "Path Tracing", NULL, NULL);
 	if (window == NULL)
 		return -1;
@@ -400,5 +405,12 @@ int main() {
 	ImGui::DestroyContext();
 	glfwDestroyWindow(window);
 	glfwTerminate();
+
+	for (Mesh* m : meshes)
+		delete m;
+	for (Shape* o : objects)
+		delete o;
+	std::remove("imgui.ini");
+
 	return 0;
 }
