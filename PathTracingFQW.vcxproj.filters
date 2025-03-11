@@ -44,6 +44,9 @@
     <ClInclude Include="SquareMatrix.h">
       <Filter>Файлы заголовков</Filter>
     </ClInclude>
+    <ClInclude Include="Utility.h">
+      <Filter>Файлы заголовков</Filter>
+    </ClInclude>
     <ClInclude Include="ImFileDialog\ImFileDialog.h">
       <Filter>Файлы заголовков</Filter>
     </ClInclude>

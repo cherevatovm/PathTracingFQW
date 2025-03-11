@@ -1,14 +1,17 @@
 #ifndef SHAPE_H
 #define SHAPE_H
 #include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
 #include <list>
 #include "Vec.h"
 #include "Ray.h"
 #include "Bounds.h"
 #include "Transform.h"
+#include "Utility.h"
 
 using uint = unsigned int;
-const double eps = 1e-5;
 enum Refl_type { DIFF, SPEC, REFR };
 
 class Shape {
@@ -163,14 +166,21 @@ public:
 
 class Mesh {
 private:
+	Transform* last_transform = nullptr;
+
 	class MeshTriangle : public Shape {
 	public:
 		const Mesh* mesh;
-		uint vert1_ind, vert2_ind, vert3_ind;
-		uint vert1_norm_ind, vert2_norm_ind, vert3_norm_ind;
+		uint vert0_ind, vert1_ind, vert2_ind;
+		uint vert0_norm_ind, vert1_norm_ind, vert2_norm_ind;
 		Vec surface_normal;	
 
 		MeshTriangle() = default;
+
+		MeshTriangle(const Mesh* mesh_, Vec color_, Refl_type refl_, 
+			const Transform* render_obj_ = nullptr, 
+			const Transform* obj_render_ = nullptr) : 
+			Shape(Vec(), color_, refl_, render_obj_, obj_render_), mesh(mesh_) {}
 
 		MeshTriangle(const Mesh* mesh_,
 			uint v1_ind_, uint v2_ind_, uint v3_ind_,
@@ -178,21 +188,21 @@ private:
 			uint v1_n_ind_ = UINT_MAX, uint v2_n_ind_ = UINT_MAX, uint v3_n_ind_ = UINT_MAX,
 			const Transform* render_obj_ = nullptr, const Transform* obj_render_ = nullptr) :
 			Shape(emis_, color_, refl_, render_obj_, obj_render_), mesh(mesh_),
-			vert1_ind(v1_ind_), vert2_ind(v2_ind_), vert3_ind(v3_ind_),
-			vert1_norm_ind(v1_n_ind_), vert2_norm_ind(v2_n_ind_), vert3_norm_ind(v3_n_ind_)
+			vert0_ind(v1_ind_), vert1_ind(v2_ind_), vert2_ind(v3_ind_),
+			vert0_norm_ind(v1_n_ind_), vert1_norm_ind(v2_n_ind_), vert2_norm_ind(v3_n_ind_)
 		{
-			surface_normal = ((mesh->vertices[vert2_ind] - mesh->vertices[vert1_ind]) %
-				(mesh->vertices[vert3_ind] - mesh->vertices[vert1_ind])).norm();
+			surface_normal = ((mesh->vertices[vert1_ind] - mesh->vertices[vert0_ind]) %
+				(mesh->vertices[vert2_ind] - mesh->vertices[vert0_ind])).norm();
 		}
 
 		MeshTriangle& operator=(const MeshTriangle& t) {
 			mesh = t.mesh;
+			vert0_ind = t.vert0_ind;
 			vert1_ind = t.vert1_ind;
 			vert2_ind = t.vert2_ind;
-			vert3_ind = t.vert3_ind;
+			vert0_norm_ind = t.vert0_norm_ind;
 			vert1_norm_ind = t.vert1_norm_ind;
 			vert2_norm_ind = t.vert2_norm_ind;
-			vert3_norm_ind = t.vert3_norm_ind;
 			emis = t.emis; color = t.color;
 			refl = t.refl;
 			render_obj = t.render_obj;
@@ -200,12 +210,25 @@ private:
 			return *this;
 		}
 
+		void calc_surface_normal() {
+			surface_normal = ((mesh->vertices[vert1_ind] - mesh->vertices[vert0_ind]) %
+				(mesh->vertices[vert2_ind] - mesh->vertices[vert0_ind])).norm();
+		}
+
+		void set_vert_ind(uint i, uint new_val) { 
+			i == 0 ? vert0_ind = new_val : (i == 1 ? vert1_ind = new_val : vert2_ind = new_val);
+		}
+		
+		void set_norm_ind(uint i, uint new_val) { 
+			i == 0 ? vert0_norm_ind = new_val : (i == 1 ? vert1_norm_ind = new_val : vert2_norm_ind = new_val); 
+		}
+
 		double intersect(const Ray& r) const override {
 			double denominator = surface_normal.dot_prod(r.dir);
 			if (fabs(denominator) < eps)
 				return 0;
 
-			Vec ao = r.orig - mesh->vertices[vert1_ind];
+			Vec ao = r.orig - mesh->vertices[vert0_ind];
 			double t = surface_normal.dot_prod(ao) / denominator;
 			t = -t;
 			if (t < eps)
@@ -213,9 +236,9 @@ private:
 
 			Vec intersect = r.orig + r.dir * t;
 
-			Vec v0 = mesh->vertices[vert2_ind] - mesh->vertices[vert1_ind];
-			Vec v1 = mesh->vertices[vert3_ind] - mesh->vertices[vert1_ind];
-			Vec v2 = intersect - mesh->vertices[vert1_ind];
+			Vec v0 = mesh->vertices[vert1_ind] - mesh->vertices[vert0_ind];
+			Vec v1 = mesh->vertices[vert2_ind] - mesh->vertices[vert0_ind];
+			Vec v2 = intersect - mesh->vertices[vert0_ind];
 
 			double d00 = v0.dot_prod(v0);
 			double d01 = v0.dot_prod(v1);
@@ -237,14 +260,88 @@ private:
 		Vec get_normal(const Vec& hit_point) const override { return surface_normal; }
 
 		Bounds3 get_bounds() const override {
-			return Bounds3::find_union(Bounds3(mesh->vertices[vert1_ind], mesh->vertices[vert2_ind]),
-				mesh->vertices[vert3_ind]);
+			return Bounds3::find_union(Bounds3(mesh->vertices[vert0_ind], mesh->vertices[vert1_ind]),
+				mesh->vertices[vert2_ind]);
 		}
 
 		Vec shape_sample(double u0, double u1) const override {
 			return Vec();
 		}
 	};
+
+	Vec centroid() const {
+		double x_sum = 0, y_sum = 0, z_sum = 0;
+		for (const auto& vertex : vertices) {
+			x_sum += vertex.x;
+			y_sum += vertex.y;
+			z_sum += vertex.z;
+		}
+		size_t count = vertices.size();
+		return { x_sum / count, y_sum / count, z_sum / count };
+	}
+
+	void affine_transformation(const Transform& tr) {
+		for (Vec& vert : vertices)
+			vert = tr.apply_transform(vert);
+		for (Vec& norm : vert_normals)
+			norm = tr.transform_normal(norm);
+		for (MeshTriangle* face : faces)
+			face->calc_surface_normal();
+	}
+
+	void calc_vertex_normals() {
+		vert_normals.clear();
+		for (uint i = 0; i < vertices.size(); ++i) {
+			std::list<Vec> triangle_normals;
+			for (MeshTriangle* face : faces) {
+				if (face->vert0_ind == i || face->vert1_ind == i || face->vert2_ind == i)
+					triangle_normals.push_back(face->surface_normal);
+			}
+
+			Vec vert_norm;
+			for (const Vec& normal : triangle_normals)
+				vert_norm += normal;
+			vert_norm *= (1.0 / triangle_normals.size());
+			vert_normals.push_back(vert_norm);
+		}
+		for (MeshTriangle* face : faces) {
+			face->vert0_norm_ind = face->vert0_ind;
+			face->vert1_norm_ind = face->vert1_ind;
+			face->vert2_norm_ind = face->vert2_ind;
+		}
+	}
+
+	void process_face(MeshTriangle* face, const std::vector<std::string>& face_data) {
+		uint vertex_ind, norm_ind, tex_coord_ind;
+		for (int i = 0; i < 3; ++i) {
+			std::istringstream iss(face_data[i]);
+
+			iss >> vertex_ind;
+			face->set_vert_ind(i, --vertex_ind);
+			char ch1 = iss.peek();
+			if (ch1 == '/') {
+				iss.ignore();
+				ch1 = iss.peek();
+				if (ch1 == '/') {
+					iss.ignore();
+					iss >> norm_ind;
+					face->set_norm_ind(i, --norm_ind);
+				}
+				else if (isdigit(ch1)) {
+					iss >> tex_coord_ind;
+					//res_vert.tex_coords = vert_tex_coords[--tex_coord_ind];
+					ch1 = iss.peek();
+					if (ch1 == '/') {
+						iss.ignore();
+						iss >> norm_ind;
+						face->set_norm_ind(i, --norm_ind);
+					}
+				}
+			}
+		}
+		face->calc_surface_normal();
+	}
+
 public:
 	std::vector<MeshTriangle*> faces;
 	std::vector<Vec> vertices;
@@ -271,26 +368,53 @@ public:
 			calc_vertex_normals();
 	};
 
-	void calc_vertex_normals() {
-		vert_normals.clear();
-		for (uint i = 0; i < vertices.size(); ++i) {
-			std::list<Vec> triangle_normals;
-			for (MeshTriangle* face : faces) {
-				if (face->vert1_ind == i || face->vert2_ind == i || face->vert3_ind == i)
-					triangle_normals.push_back(face->surface_normal);
-			}
+	void rotate_by_center(double theta, int rotate_index) { 
+		affine_transformation(Transform::rotate_around_point(centroid(), theta, rotate_index)); 
+	}
+	
+	void scale_by_center(double x, double y, double z) {
+		affine_transformation(Transform::scale_around_point(centroid(), x, y, z));
+	}
 
-			Vec vert_norm;
-			for (const Vec& normal : triangle_normals)
-				vert_norm += normal;
-			vert_norm *= (1.0 / triangle_normals.size());
-			vert_normals.push_back(vert_norm);
+	void translate(const Vec& delta) {
+		affine_transformation(Transform::translate(delta));
+	}
+
+	void load_model(const std::string& file_name) {
+		std::ifstream file(file_name);
+		if (!file.is_open()) {
+			std::cerr << "Failed to open file: " << file_name << std::endl;
+			return;
 		}
-		for (MeshTriangle* face : faces) {
-			face->vert1_norm_ind = face->vert1_ind;
-			face->vert2_norm_ind = face->vert2_ind;
-			face->vert3_norm_ind = face->vert3_ind;
+
+		std::string line;
+		while (std::getline(file, line)) {
+			std::istringstream iss(line);
+			std::string type;
+			iss >> type;
+			if (type.empty() || type[0] == '#') {
+				continue;
+			}
+			if (type == "v") {
+				float x, y, z;
+				iss >> x >> y >> z;
+				vertices.emplace_back(x, y, z);
+			}
+			else if (type == "vn") {
+				float x, y, z;
+				iss >> x >> y >> z;
+				vert_normals.emplace_back(x, y, z);
+			}
+			else if (type == "f") {
+				auto spl = split(line);
+				for (int i = 3; i < spl.size(); ++i) {
+					MeshTriangle* cur_triangle = new MeshTriangle(this, color, refl);
+					faces.push_back(cur_triangle);
+					process_face(cur_triangle, std::vector<std::string>{ spl[1], spl[i - 1], spl[i] });
+				}
+			}
 		}
+		file.close();
 	}
 
 	static Mesh* create_hexahedron(Vec center_, double radius_, 

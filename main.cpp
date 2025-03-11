@@ -39,7 +39,6 @@ std::vector<Sphere*> light_sources = {
 };
 
 // radius, position, emission, color, material
-//Sphere objects[] = {
 std::vector<Shape*> objects = {
 	new Triangle(Vec(0, 0, 170), Vec(0, 82.5, 170), Vec(), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
 	new Triangle(Vec(0, 82.5, 170), Vec(0, 82.5, 0), Vec(), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
@@ -68,11 +67,15 @@ void fill_scene() {
 	//Sphere* s2 = new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(0.9 , 0.9, 0.9), SPEC); // Matte sphere 
 	//objects.push_back(s2);
 
-	Mesh* m = Mesh::create_hexahedron(Vec(33, 15, 65), 15, M_PI / 4, Vec(0.65, 0.65, 0.65), SPEC);
+	//Mesh* m = Mesh::create_hexahedron(Vec(33, 15, 65), 15, M_PI / 4, Vec(0.65, 0.65, 0.65), DIFF);
+	Mesh* m = new Mesh(Vec(0.65, 0.65, 0.65), DIFF);
 	meshes.push_back(m);
-	//Hexahedron h1(Vec(33, 15, 65), 15, M_PI / 4, Vec(), Vec(0.65, 0.65, 0.65), SPEC);
-	//for (Triangle* f : h1.faces)
-		//objects.push_back(f);
+	m->load_model("dog.obj");
+	m->scale_by_center(0.75, 0.75, 0.75);
+	m->rotate_by_center(-90, 0);
+	m->rotate_by_center(20, 1);
+	m->translate(Vec(30, 35, 60));	
+
 	for (auto* f : m->faces)
 		objects.push_back(f);
 

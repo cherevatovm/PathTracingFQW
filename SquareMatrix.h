@@ -13,6 +13,18 @@ public:
                 contents[i][j] = (i == j) ? 1 : 0;
     }
 
+    SquareMatrix(std::initializer_list<std::initializer_list<double>> mat) {
+        size_t i = 0, j = 0;
+        for (const auto& row : mat) {
+            j = 0;
+            for (double val : row) {
+                contents[i][j] = val;
+                ++j;
+            }
+            ++i;
+        }
+    }
+
     SquareMatrix(const double mat[N][N]) {
         for (int i = 0; i < N; ++i)
             for (int j = 0; j < N; ++j)
@@ -24,6 +36,15 @@ public:
         for (int i = 0; i < N; ++i)
             for (int j = 0; j < N; ++j)
                 res.contents[i][j] += m.contents[i][j];
+        return res;
+    }
+
+    SquareMatrix operator*(const SquareMatrix& m) const {
+        SquareMatrix res = zero_matr();
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < N; ++j)
+                for (int k = 0; k < N; ++k)
+                    res.contents[i][j] += contents[i][k] * m.contents[k][j];
         return res;
     }
 
@@ -108,6 +129,14 @@ public:
         inv_matrix.contents[2][2] = (contents[0][0] * contents[1][1] - contents[0][1] * contents[1][0]) * inv_det;
 
         return inv_matrix;
+    }
+
+    void print() {
+        for (int i = 0; i < N; ++i) {
+            for (int j = 0; j < N; ++j)
+                std::cout << contents[i][j] << " ";
+            std::cout << std::endl;
+        }
     }
 };
 

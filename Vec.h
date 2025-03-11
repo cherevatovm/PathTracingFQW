@@ -2,6 +2,8 @@
 #define VEC_H
 #include <math.h> 
 
+const double eps = 1e-10;
+
 struct Vec {
 	double x, y, z;
 
@@ -15,6 +17,7 @@ struct Vec {
 		return *this;
 	}
 	Vec operator-(const Vec& v) const { return Vec(x - v.x, y - v.y, z - v.z); }
+	Vec operator-() const { return Vec(-x, -y, -z); }
 	Vec operator*(double scalar) const { return Vec(x * scalar, y * scalar, z * scalar); }
 	Vec& operator*=(double scalar) {
 		x *= scalar;
@@ -57,14 +60,5 @@ struct Vec {
 		z = nz + center.z;
 	}
 };
-
-inline double clamp(double val, double low, double high) {
-	if (val < low)
-		return low;
-	else if (val > high)
-		return high;
-	else
-		return val;
-}
 
 #endif
