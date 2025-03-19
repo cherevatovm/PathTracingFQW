@@ -31,6 +31,7 @@ static void glfw_error_callback(int error, const char* description) {
 int width = 1024, height = 768, samples;
 Vec* image;
 std::string ui_text = "";
+int model_choice = 0, brdf_choice = 0;
 
 std::vector<Sphere*> light_sources = {
 	new Sphere(5.5, Vec(50, 81.6 - 15.5, 90), Vec(1, 1, 1) * 40, Vec(), DIFF),
@@ -40,6 +41,14 @@ std::vector<Sphere*> light_sources = {
 
 // radius, position, emission, color, material
 std::vector<Shape*> objects = {
+	/*
+	new Sphere(1e5, Vec(1e5 + 1, 40.8, 81.6), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
+	new Sphere(1e5, Vec(-1e5 + 99, 40.8, 81.6), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
+	new Sphere(1e5, Vec(50, 40.8, 1e5), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
+	new Sphere(1e5, Vec(50, 40.8, -1e5 + 170), Vec(), Vec(), DIFF), // Front wall
+	new Sphere(1e5, Vec(50, 1e5, 81.6), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
+	new Sphere(1e5, Vec(50, -1e5 + 81.6, 81.6),Vec(),Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
+	*/
 	new Triangle(Vec(0, 0, 170), Vec(0, 82.5, 170), Vec(), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
 	new Triangle(Vec(0, 82.5, 170), Vec(0, 82.5, 0), Vec(), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
 
@@ -64,17 +73,70 @@ std::vector<Mesh*> meshes;
 void fill_scene() {
 	Sphere* s1 = new Sphere(16.5, Vec(73, 16.5, 95), Vec(), Vec(1, 1, 1), REFR); // Glass sphere
 	objects.push_back(s1);
-	//Sphere* s2 = new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(0.9 , 0.9, 0.9), SPEC); // Matte sphere 
-	//objects.push_back(s2);
 
 	//Mesh* m = Mesh::create_hexahedron(Vec(33, 15, 65), 15, M_PI / 4, Vec(0.65, 0.65, 0.65), DIFF);
-	Mesh* m = new Mesh(Vec(0.65, 0.65, 0.65), DIFF);
+	Mesh* m = new Mesh(Vec(0.65, 0.65, 0.65), (Refl_type)brdf_choice);
 	meshes.push_back(m);
-	m->load_model("dog.obj");
-	m->scale_by_center(0.75, 0.75, 0.75);
+
+	int res = -1;
+	switch (model_choice) {
+	case 0:
+		objects.push_back(new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), (Refl_type)brdf_choice));
+		break;
+	case 1:
+		res = m->load_model("3D models/cube.obj");
+		if (res == 0) {
+			m->scale(15, 15, 15);
+			m->rotate(30, 1);
+			m->translate(Vec(30, 15, 80));
+		}
+		break;
+	case 2:
+		res = m->load_model("3D models/pinetree.obj");
+		if (res == 0) {
+			m->scale(0.2, 0.2, 0.2, false);
+			m->translate(Vec(100, 20, 80));
+		}
+		break;
+	case 3:
+		res = m->load_model("3D models/dog.obj");
+		if (res == 0) {
+			m->scale(0.75, 0.75, 0.75);
+			m->rotate(-90, 0);
+			m->rotate(20, 1);
+			m->translate(Vec(30, 35, 60));
+		}
+		break;
+	case 4:
+		res = m->load_model("3D models/skull.obj");
+		if (res == 0) {
+			m->scale(5, 5, 5);
+			m->rotate(-30, 1);
+			m->translate(Vec(30, 25, 80));
+		}
+		break;
+	}
+	if (res != 0)
+		objects.push_back(new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), (Refl_type)brdf_choice));
+
+	/*
+	m->load_model("3D models/sphere.obj");
+	m->scale(15, 15, 15);
+	m->translate(Vec(30, 30, 80));
+	*/
+	/*
+	m->load_model("3D models/utah_teapot_lowpoly.obj");
+	m->scale(40, 40, 40);
+	m->rotate(30, 1);
+	m->translate(Vec(30, 30, 80));
+	*/
+	/*
+	m->load_model("3D models/heart.obj");
+	m->scale_by_center(2, 2, 2);
 	m->rotate_by_center(-90, 0);
-	m->rotate_by_center(20, 1);
-	m->translate(Vec(30, 35, 60));	
+	m->rotate_by_center(15, 1);
+	m->translate(Vec(30, 25, 80));
+	*/
 
 	for (auto* f : m->faces)
 		objects.push_back(f);
@@ -139,7 +201,7 @@ inline bool intersect_scene(const Ray& r, double& t, int& id) {
 }
 
 Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
-	if (depth > 100) return Vec();
+	if (depth > 500) return Vec();
 
 	double t; // Distance to intersection 
 	int id = 0; // ID of intersected object 
@@ -170,6 +232,16 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 		create_orthonorm_sys(w, u, v);
 		Vec d = (u * cos(r1) * r2s + v * sin(r1) * r2s + w * sqrt(1 - r2)).norm();
 
+		// for hemisphere sampling
+		/*
+		Vec samp_dir_ = sample_hemisphere(erand48(Xi), erand48(Xi));
+		Vec d;
+		d.x = Vec(u.x, v.x, w.x).dot_prod(samp_dir_);
+		d.y = Vec(u.y, v.y, w.y).dot_prod(samp_dir_);
+		d.z = Vec(u.z, v.z, w.z).dot_prod(samp_dir_);
+		d.norm();
+		*/
+
 		Vec e;
 		int s1 = objects.size(), s2 = light_sources.size();
 		for (int i = 0; i < s2; ++i) {
@@ -183,6 +255,16 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 			double cos_a = 1 - eps1 + eps1 * cos_a_max;
 			double sin_a = sqrt(1 - cos_a * cos_a);
 			double phi = 2 * M_PI * eps2;
+
+			// for hemisphere sampling
+			/*
+			Vec rand = sample_hemisphere(erand48(Xi), erand48(Xi));
+			Vec samp_dir;
+			samp_dir.x = Vec(su.x, sv.x, sw.x).dot_prod(rand);
+			samp_dir.y = Vec(su.y, sv.y, sw.y).dot_prod(rand);
+			samp_dir.z = Vec(su.z, sv.z, sw.z).dot_prod(rand);
+			samp_dir.norm();
+			*/
 
 			Vec samp_dir = (su * cos(phi) * sin_a + sv * sin(phi) * sin_a + sw * cos_a).norm();
 
@@ -274,6 +356,39 @@ void render_scene() {
 
 }
 
+void user_interaction() {
+	std::cout << "\n          +-----------------+" << std::endl;
+	std::cout << "         /                 /|" << std::endl;
+	std::cout << "        /                 / |" << std::endl;
+	std::cout << "       +-----------------+  |" << std::endl;
+	std::cout << "       |                 |  |" << std::endl;
+	std::cout << "       |                 |  |" << std::endl;
+	std::cout << "       |                 |  |" << std::endl;
+	std::cout << "       |    ?       o    |  |" << std::endl;
+	std::cout << "       |  Model  Sphere  | /" << std::endl;
+	std::cout << "       |                 |/" << std::endl;
+	std::cout << "       +-----------------+\n" << std::endl;
+
+	std::cout << "Choose a model to load:\n1 - Sphere\n2 - Cube\n3 - Pinetree\n4 - Dog\n5 - Skull" << std::endl;
+	std::cin >> model_choice;
+	if (model_choice >= 1 && model_choice <= 5)
+		--model_choice;
+	else {
+		std::cout << "Entered incorrect model ID, a sphere will be used." << std::endl;
+		model_choice = 0;
+	}
+
+	std::cout << "\nDo you want the model to be\n1 - Diffuse\n2 - Specular\n3 - Refractive" << std::endl;
+	std::cin >> brdf_choice;
+	if (brdf_choice >= 1 && brdf_choice <= 3)
+		--brdf_choice;
+	else {
+		std::cout << "Entered incorrect choice, the model will be diffuse.\n" << std::endl;
+		brdf_choice = 0;
+	}
+	std::cout << std::endl;
+}
+
 int main() {
 	setlocale(LC_ALL, "RUSSIAN");
 	while (true) {
@@ -295,7 +410,8 @@ int main() {
 		else
 			std::cout << "Entered incorrect samples per pixel value.\n" << std::endl;
 	}
-	
+	user_interaction();
+
 	image = new Vec[width * height];
 	fill_scene();
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
@@ -306,7 +422,7 @@ int main() {
 	glfwSetErrorCallback(glfw_error_callback);
 	if (!glfwInit())
 		return -1;
-	int win_width = width < 1024 ? 1024 : width + 15; 
+	int win_width = width < 1024 ? 1024 : width + 15;
 	int win_height = height < 768 ? 768 : height + 84;
 	GLFWwindow* window = glfwCreateWindow(win_width, win_height, "Path Tracing", NULL, NULL);
 	if (window == NULL)
@@ -341,11 +457,11 @@ int main() {
 		glBindTexture(GL_TEXTURE_2D, 0);
 
 		return (void*)tex;
-	};	
+		};
 	ifd::FileDialog::Instance().DeleteTexture = [](void* tex) {
 		GLuint texID = (GLuint)tex;
 		glDeleteTextures(1, &texID);
-	};
+		};
 
 	GLuint tex_id = create_texture();
 	// Save the result to png image

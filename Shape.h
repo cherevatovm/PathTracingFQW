@@ -166,14 +166,13 @@ public:
 
 class Mesh {
 private:
-	Transform* last_transform = nullptr;
-
 	class MeshTriangle : public Shape {
 	public:
 		const Mesh* mesh;
 		uint vert0_ind, vert1_ind, vert2_ind;
 		uint vert0_norm_ind, vert1_norm_ind, vert2_norm_ind;
-		Vec surface_normal;	
+		Vec surface_normal;
+		bool is_flat;
 
 		MeshTriangle() = default;
 
@@ -223,6 +222,16 @@ private:
 			i == 0 ? vert0_norm_ind = new_val : (i == 1 ? vert1_norm_ind = new_val : vert2_norm_ind = new_val); 
 		}
 
+		void check_if_flat() {
+			Vec normal0 = mesh->vert_normals[vert0_norm_ind];
+			normal0.norm();
+			Vec normal1 = mesh->vert_normals[vert1_norm_ind];
+			normal1.norm();
+			Vec normal2 = mesh->vert_normals[vert2_norm_ind];
+			normal2.norm();
+			is_flat = (normal0 - normal1).length() < eps && (normal0 - normal2).length() < eps;
+		}
+
 		double intersect(const Ray& r) const override {
 			double denominator = surface_normal.dot_prod(r.dir);
 			if (fabs(denominator) < eps)
@@ -257,7 +266,23 @@ private:
 			return 0;
 		}
 
-		Vec get_normal(const Vec& hit_point) const override { return surface_normal; }
+		Vec get_normal(const Vec& hit_point) const override {
+			if (vert0_norm_ind == UINT_MAX || is_flat)
+				return surface_normal;
+			else {
+				Vec uvw = compute_barycentric_coords(hit_point);
+				if (abs(uvw.x + 1) < eps)
+					return surface_normal;
+				Vec hp_normal = mesh->vert_normals[vert0_norm_ind] * uvw.x +
+					mesh->vert_normals[vert1_norm_ind] * uvw.y +
+					mesh->vert_normals[vert2_norm_ind] * uvw.z;
+				if (hp_normal.length() > eps)
+					hp_normal.norm();
+				else
+					hp_normal = surface_normal;
+				return hp_normal;
+			}
+		}
 
 		Bounds3 get_bounds() const override {
 			return Bounds3::find_union(Bounds3(mesh->vertices[vert0_ind], mesh->vertices[vert1_ind]),
@@ -266,6 +291,28 @@ private:
 
 		Vec shape_sample(double u0, double u1) const override {
 			return Vec();
+		}
+
+		Vec compute_barycentric_coords(const Vec& hit_point) const {
+			Vec v0 = mesh->vertices[vert1_ind] - mesh->vertices[vert0_ind];
+			Vec v1 = mesh->vertices[vert2_ind] - mesh->vertices[vert0_ind];
+			Vec v2 = hit_point - mesh->vertices[vert0_ind];
+
+			double d00 = v0.dot_prod(v0);
+			double d01 = v0.dot_prod(v1);
+			double d11 = v1.dot_prod(v1);
+			double d20 = v2.dot_prod(v0);
+			double d21 = v2.dot_prod(v1);
+
+			double denom = d00 * d11 - d01 * d01;
+			if (abs(denom) < eps)
+				return Vec(-1, -1, -1);
+			double v = (d11 * d20 - d01 * d21) / denom;
+			double w = (d00 * d21 - d01 * d20) / denom;
+			double u = 1.0 - v - w;
+			Vec res1(u, v, w);
+
+			return Vec(u, v, w);
 		}
 	};
 
@@ -342,6 +389,14 @@ private:
 		face->calc_surface_normal();
 	}
 
+	void clear() {
+		for (int i = 0; i < faces.size(); ++i)
+			delete faces[i];
+		faces.clear();
+		vertices.clear();
+		vert_normals.clear();
+	}
+
 public:
 	std::vector<MeshTriangle*> faces;
 	std::vector<Vec> vertices;
@@ -368,25 +423,31 @@ public:
 			calc_vertex_normals();
 	};
 
-	void rotate_by_center(double theta, int rotate_index) { 
-		affine_transformation(Transform::rotate_around_point(centroid(), theta, rotate_index)); 
+	void rotate(double theta, int rotate_index, bool by_center = true) { 
+		if (by_center)
+			affine_transformation(Transform::rotate_around_point(centroid(), theta, rotate_index)); 
+		else
+			affine_transformation(Transform::rotate_around_axis(theta, rotate_index));
 	}
 	
-	void scale_by_center(double x, double y, double z) {
-		affine_transformation(Transform::scale_around_point(centroid(), x, y, z));
+	void scale(double x, double y, double z, bool by_center = true) {
+		if (by_center)
+			affine_transformation(Transform::scale_around_point(centroid(), x, y, z));
+		else
+			affine_transformation(Transform::scale(x, y, z));
 	}
 
 	void translate(const Vec& delta) {
 		affine_transformation(Transform::translate(delta));
 	}
 
-	void load_model(const std::string& file_name) {
+	int load_model(const std::string& file_name) {
 		std::ifstream file(file_name);
 		if (!file.is_open()) {
 			std::cerr << "Failed to open file: " << file_name << std::endl;
-			return;
+			return -1;
 		}
-
+		clear();
 		std::string line;
 		while (std::getline(file, line)) {
 			std::istringstream iss(line);
@@ -415,6 +476,9 @@ public:
 			}
 		}
 		file.close();
+		if (vert_normals.size() > 0)
+			for (MeshTriangle* face : faces) face->check_if_flat();
+		return 0;
 	}
 
 	static Mesh* create_hexahedron(Vec center_, double radius_, 
