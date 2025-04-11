@@ -10,6 +10,7 @@
 #include "Bounds.h"
 #include "Transform.h"
 #include "Utility.h"
+#include "Intersection.h"
 
 using uint = unsigned int;
 enum Refl_type { DIFF, SPEC, REFR };
@@ -27,7 +28,7 @@ public:
 		const Transform* obj_render_ = nullptr) :
 		emis(emis_), color(color_), refl(refl_), render_obj(render_obj_), obj_render(obj_render_) {};
 
-	virtual double intersect(const Ray& r) const = 0;
+	virtual Intersection intersect(const Ray& r, double t_max = DBL_MAX) const = 0;
 	
 	virtual Bounds3 get_bounds() const = 0;
 
@@ -60,20 +61,20 @@ public:
 	}
 
 	// Returns distance or 0 if there is no hit 
-	double intersect(const Ray& r) const override {
+	Intersection intersect(const Ray& r, double t_max = DBL_MAX) const override {
 		Vec op = r.orig - center; // Solve t^2 * d.d + 2 * t * (o - p).d + (o - p).(o - p) - R^2 = 0
 		double b = 2 * (op).dot_prod(r.dir);
 		double c = op.dot_prod(op) - radius * radius;
 		double discr = b * b - 4 * c;
 
-		if (discr < 0) return 0;
+		if (discr < 0) return Intersection();
 		else discr = sqrt(discr);
 
 		double t0 = -b + discr;
 		double t1 = -b - discr;
 
-		return (t1 > eps) ? (0.5 * t1) :
-			((t0 > eps) ? (0.5 * t0) : 0);
+		return (t1 > eps) ? Intersection(0.5 * t1, this) :
+			((t0 > eps) ? Intersection(0.5 * t0, this) : Intersection());
 	}
 
 	Vec get_normal(const Vec& hit_point) const override {
@@ -119,16 +120,16 @@ public:
 		return *this;
 	}
 
-	double intersect(const Ray& r) const override {
+	Intersection intersect(const Ray& r, double t_max = DBL_MAX) const override {
 		double denominator = normal.dot_prod(r.dir);
 		if (fabs(denominator) < eps)
-			return 0;
+			return Intersection();
 
 		Vec ao = r.orig - vert1;
 		double t = normal.dot_prod(ao) / denominator;
 		t = -t;
 		if (t < eps)
-			return 0;
+			return Intersection();
 
 		Vec intersect = r.orig + r.dir * t;
 
@@ -148,9 +149,9 @@ public:
 		double u = 1.0 - v - w;
 
 		if (u >= 0 && v >= 0 && w >= 0)
-			return t;
+			return Intersection(t, this);
 
-		return 0;
+		return Intersection();
 	}
 
 	Vec get_normal(const Vec& hit_point) const override { return normal; }
@@ -232,16 +233,16 @@ private:
 			is_flat = (normal0 - normal1).length() < eps && (normal0 - normal2).length() < eps;
 		}
 
-		double intersect(const Ray& r) const override {
+		Intersection intersect(const Ray& r, double t_max = DBL_MAX) const override {
 			double denominator = surface_normal.dot_prod(r.dir);
 			if (fabs(denominator) < eps)
-				return 0;
+				return Intersection();
 
 			Vec ao = r.orig - mesh->vertices[vert0_ind];
 			double t = surface_normal.dot_prod(ao) / denominator;
 			t = -t;
 			if (t < eps)
-				return 0;
+				return Intersection();
 
 			Vec intersect = r.orig + r.dir * t;
 
@@ -261,9 +262,9 @@ private:
 			double u = 1.0 - v - w;
 
 			if (u >= 0 && v >= 0 && w >= 0)
-				return t;
+				return Intersection(t, this);
 
-			return 0;
+			return Intersection();
 		}
 
 		Vec get_normal(const Vec& hit_point) const override {
