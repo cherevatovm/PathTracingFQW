@@ -3,7 +3,7 @@
 #include <math.h>
 #include "Utility.h"
 
-const double eps = 1e-10;
+constexpr float eps = std::numeric_limits<float>::epsilon();
 
 struct Vec {
 	double x, y, z;

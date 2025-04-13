@@ -203,8 +203,8 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 	Intersection inters = intersect_scene(r);
 	if (!inters.object) return Vec(); // Return black if there is no intersection 
 
-	Vec hit_point = r.orig + r.dir * inters.t;
-	Vec n = inters.object->get_normal(hit_point);
+	inters.calc_inters_point(r);
+	Vec n = inters.object->get_normal(inters);
 	Vec nl = n.dot_prod(r.dir) < 0 ? n : n * -1;
 	Vec color = inters.object->color;
 	double rr_prob = std::max(color.x, std::max(color.y, color.z));
@@ -241,11 +241,11 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 		int s1 = objects.size(), s2 = light_sources.size();
 		for (int i = 0; i < s2; ++i) {
 			// Create orthonormal coord system and sample direction by solid angle
-			Vec sw = (light_sources[i]->center - hit_point).norm(), su, sv;
+			Vec sw = (light_sources[i]->center - inters.hit_point).norm(), su, sv;
 			create_orthonorm_sys(sw, su, sv);
 
 			double cos_a_max = sqrt(1 - light_sources[i]->radius * light_sources[i]->radius /
-				(hit_point - light_sources[i]->center).dot_prod(hit_point - light_sources[i]->center));
+				(inters.hit_point - light_sources[i]->center).dot_prod(inters.hit_point - light_sources[i]->center));
 			double eps1 = erand48(Xi), eps2 = erand48(Xi);
 			double cos_a = 1 - eps1 + eps1 * cos_a_max;
 			double sin_a = sqrt(1 - cos_a * cos_a);
@@ -264,20 +264,20 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 			Vec samp_dir = (su * cos(phi) * sin_a + sv * sin(phi) * sin_a + sw * cos_a).norm();
 
 			// shoot shadow rays
-			if (intersect_scene(Ray(hit_point, samp_dir)).object == light_sources[i]) {
+			if (intersect_scene(Ray(inters.hit_point, samp_dir)).object == light_sources[i]) {
 				double omega = 2 * M_PI * (1 - cos_a_max);
 				e = e + color.mult(light_sources[i]->emis * samp_dir.dot_prod(nl) * omega) * (1 / M_PI); // 1/PI for BRDF
 			}
 		}
 
-		return inters.object->emis * E + e + color.mult(path_tracing(Ray(hit_point, d), depth, Xi, 0));
+		return inters.object->emis * E + e + color.mult(path_tracing(Ray(inters.hit_point, d), depth, Xi, 0));
 	}
 	// Specular BRDF
 	else if (inters.object->refl == SPEC)
-		return inters.object->emis + color.mult(path_tracing(Ray(hit_point, r.dir - n * n.dot_prod(r.dir) * 2), depth, Xi)); // Angle of incidence == angle of reflection
+		return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, r.dir - n * n.dot_prod(r.dir) * 2), depth, Xi)); // Angle of incidence == angle of reflection
 
 	// Refractive BRDF
-	Ray refl_ray(hit_point, r.dir - n * n.dot_prod(r.dir) * 2);
+	Ray refl_ray(inters.hit_point, r.dir - n * n.dot_prod(r.dir) * 2);
 	bool into = n.dot_prod(nl) > 0; // Check if a ray goes in or out 
 	double refr_ind1 = 1, refr_ind2 = 1.5;
 	double refr_ratio = into ? refr_ind1 / refr_ind2 : refr_ind2 / refr_ind1;
@@ -305,10 +305,10 @@ Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
 		if (erand48(Xi) < prob)
 			result = path_tracing(refl_ray, depth, Xi) * refl_prob;
 		else
-			result = path_tracing(Ray(hit_point, tdir), depth, Xi) * trans_prob;
+			result = path_tracing(Ray(inters.hit_point, tdir), depth, Xi) * trans_prob;
 	}
 	else
-		result = path_tracing(refl_ray, depth, Xi) * Fr + path_tracing(Ray(hit_point, tdir), depth, Xi) * Tr;
+		result = path_tracing(refl_ray, depth, Xi) * Fr + path_tracing(Ray(inters.hit_point, tdir), depth, Xi) * Tr;
 
 	return inters.object->emis + color.mult(result);
 }

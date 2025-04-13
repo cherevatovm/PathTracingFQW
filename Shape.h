@@ -28,11 +28,11 @@ public:
 		const Transform* obj_render_ = nullptr) :
 		emis(emis_), color(color_), refl(refl_), render_obj(render_obj_), obj_render(obj_render_) {};
 
-	virtual Intersection intersect(const Ray& r, double t_max = DBL_MAX) const = 0;
+	virtual Intersection intersect(const Ray& r) const = 0;
 	
 	virtual Bounds3 get_bounds() const = 0;
 
-	virtual Vec get_normal(const Vec& hit_point) const = 0;
+	virtual Vec get_normal(const Intersection& inters) const = 0;
 
 	virtual Vec shape_sample(double u0, double u1) const = 0;
 };
@@ -61,7 +61,7 @@ public:
 	}
 
 	// Returns distance or 0 if there is no hit 
-	Intersection intersect(const Ray& r, double t_max = DBL_MAX) const override {
+	Intersection intersect(const Ray& r) const override {
 		Vec op = r.orig - center; // Solve t^2 * d.d + 2 * t * (o - p).d + (o - p).(o - p) - R^2 = 0
 		double b = 2 * (op).dot_prod(r.dir);
 		double c = op.dot_prod(op) - radius * radius;
@@ -77,8 +77,8 @@ public:
 			((t0 > eps) ? Intersection(0.5 * t0, this) : Intersection());
 	}
 
-	Vec get_normal(const Vec& hit_point) const override {
-		return (hit_point - center).norm();
+	Vec get_normal(const Intersection& inters) const override {
+		return (inters.hit_point - center).norm();
 	}
 
 	Bounds3 get_bounds() const override {
@@ -120,7 +120,7 @@ public:
 		return *this;
 	}
 
-	Intersection intersect(const Ray& r, double t_max = DBL_MAX) const override {
+	Intersection intersect(const Ray& r) const override {
 		double denominator = normal.dot_prod(r.dir);
 		if (fabs(denominator) < eps)
 			return Intersection();
@@ -154,7 +154,7 @@ public:
 		return Intersection();
 	}
 
-	Vec get_normal(const Vec& hit_point) const override { return normal; }
+	Vec get_normal(const Intersection& inters) const override { return normal; }
 
 	Bounds3 get_bounds() const override { 
 		return Bounds3::find_union(Bounds3(vert1, vert2), vert3); 
@@ -233,50 +233,42 @@ private:
 			is_flat = (normal0 - normal1).length() < eps && (normal0 - normal2).length() < eps;
 		}
 
-		Intersection intersect(const Ray& r, double t_max = DBL_MAX) const override {
-			double denominator = surface_normal.dot_prod(r.dir);
-			if (fabs(denominator) < eps)
-				return Intersection();
+		Intersection intersect(const Ray& r) const override {
+			Vec e0 = mesh->vertices[vert1_ind] - mesh->vertices[vert0_ind];
+			Vec e1 = mesh->vertices[vert2_ind] - mesh->vertices[vert0_ind];
+			Vec ray_cr_e1 = r.dir % e1;
+			double det = e0.dot_prod(ray_cr_e1);
 
-			Vec ao = r.orig - mesh->vertices[vert0_ind];
-			double t = surface_normal.dot_prod(ao) / denominator;
-			t = -t;
-			if (t < eps)
-				return Intersection();
+			if (abs(det) < eps)
+				return {};
 
-			Vec intersect = r.orig + r.dir * t;
+			double inv_det = 1.0 / det;
+			Vec s = r.orig - mesh->vertices[vert0_ind];
+			double v = inv_det * s.dot_prod(ray_cr_e1);
 
-			Vec v0 = mesh->vertices[vert1_ind] - mesh->vertices[vert0_ind];
-			Vec v1 = mesh->vertices[vert2_ind] - mesh->vertices[vert0_ind];
-			Vec v2 = intersect - mesh->vertices[vert0_ind];
+			if (v < -eps || v > 1 + eps)
+				return {};
 
-			double d00 = v0.dot_prod(v0);
-			double d01 = v0.dot_prod(v1);
-			double d11 = v1.dot_prod(v1);
-			double d20 = v2.dot_prod(v0);
-			double d21 = v2.dot_prod(v1);
+			Vec s_cross_e1 = s % e0;
+			double w = inv_det * r.dir.dot_prod(s_cross_e1);
 
-			double denom = d00 * d11 - d01 * d01;
-			double v = (d11 * d20 - d01 * d21) / denom;
-			double w = (d00 * d21 - d01 * d20) / denom;
-			double u = 1.0 - v - w;
+			if (w < -eps || v + w > 1 + eps)
+				return {};
 
-			if (u >= 0 && v >= 0 && w >= 0)
-				return Intersection(t, this);
-
-			return Intersection();
+			double t = inv_det * e1.dot_prod(s_cross_e1);
+			if (t > eps)
+				return Intersection(t, this, Vec(1 - v - w, v, w));
+			
+			return {};
 		}
 
-		Vec get_normal(const Vec& hit_point) const override {
+		Vec get_normal(const Intersection& inters) const override {
 			if (vert0_norm_ind == UINT_MAX || is_flat)
 				return surface_normal;
 			else {
-				Vec uvw = compute_barycentric_coords(hit_point);
-				if (abs(uvw.x + 1) < eps)
-					return surface_normal;
-				Vec hp_normal = mesh->vert_normals[vert0_norm_ind] * uvw.x +
-					mesh->vert_normals[vert1_norm_ind] * uvw.y +
-					mesh->vert_normals[vert2_norm_ind] * uvw.z;
+				Vec hp_normal = mesh->vert_normals[vert0_norm_ind] * inters.baryc_coords.x +
+					mesh->vert_normals[vert1_norm_ind] * inters.baryc_coords.y +
+					mesh->vert_normals[vert2_norm_ind] * inters.baryc_coords.z;
 				if (hp_normal.length() > eps)
 					hp_normal.norm();
 				else
