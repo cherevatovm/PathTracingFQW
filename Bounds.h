@@ -29,6 +29,8 @@ public:
 	Vec operator[](int i) const { return (i == 0) ? p_min : p_max; }
 	Vec& operator[](int i) { return (i == 0) ? p_min : p_max; }
 
+	Vec centroid() const { return (p_min + p_max) * 0.5; }
+
 	Vec get_corner(int i) const {
 		return Vec((*this)[(i & 1)].x,
 			(*this)[(i & 2) ? 1 : 0].y,

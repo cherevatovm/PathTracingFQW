@@ -92,4 +92,24 @@ struct Vec {
 	}
 };
 
+void create_orthonorm_sys(const Vec& v1, Vec& v2, Vec& v3) {
+	// Projection to y = 0 plane and normalized orthogonal vector construction
+	if (std::abs(v1.x) > std::abs(v1.y)) {
+		double inv_len = 1.0 / sqrt(v1.x * v1.x + v1.z * v1.z);
+		v2 = Vec(-v1.z * inv_len, 0.0, v1.x * inv_len);
+	}
+	// Projection to x = 0 plane and normalized orthogonal vector construction
+	else {
+		double inv_len = 1.0 / sqrt(v1.y * v1.y + v1.z * v1.z);
+		v2 = Vec(0.0, v1.z * inv_len, -v1.y * inv_len);
+	}
+	v3 = v1 % v2;
+}
+
+Vec sample_hemisphere(double u1, double u2) {
+	const double r = sqrt(1.0 - u1 * u1);
+	const double phi = 2 * M_PI * u2;
+	return Vec(cos(phi) * r, sin(phi) * r, u1);
+}
+
 #endif

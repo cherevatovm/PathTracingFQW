@@ -34,139 +34,344 @@ Vec* image;
 std::string ui_text = "";
 int model_choice = 0, brdf_choice = 0;
 
-std::vector<Sphere*> light_sources = {
-	new Sphere(5.5, Vec(50, 81.6 - 15.5, 90), Vec(1, 1, 1) * 40, Vec(), DIFF),
-	//new Sphere(2.75, Vec(70, 81.6 - 30.5, 81.6), Vec(0, 1, 1) * 20,  Vec(), DIFF),
-	//new Sphere(1.375, Vec(20, 81.6 - 20, 81.6), Vec(1, 1, 0) * 40,  Vec(), DIFF)
+class Scene {
+private:
+	std::vector<Sphere*> light_sources;
+	std::vector<Shape*> objects;
+	std::vector<Mesh*> meshes;
+
+	inline Intersection intersect_scene(const Ray& r) {
+		Intersection closest_inters(LDBL_MAX);
+		for (Shape* obj : objects) {
+			Intersection inters = obj->intersect(r);
+			if (inters.object && inters < closest_inters)
+				closest_inters = inters;
+		}
+		return closest_inters;
+	}
+
+	Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
+		if (depth > 100) return Vec();
+		Intersection inters = intersect_scene(r);
+		if (!inters.object) return Vec(); // Return black if there is no intersection 
+
+		inters.calc_inters_point(r);
+		Vec n = inters.object->get_normal(inters);
+		Vec nl = n.dot_prod(r.dir) < 0 ? n : n * -1;
+		Vec color = inters.object->color;
+		double rr_prob = std::max(color.x, std::max(color.y, color.z));
+
+		// Russian Roulette for path termination
+		if (++depth > 5 || !rr_prob) {
+			if (erand48(Xi) < rr_prob)
+				color = color * (1 / rr_prob);
+			else
+				return inters.object->emis * E;
+		}
+
+		// Diffuse BRDF
+		if (inters.object->refl == DIFF) {
+			double r1 = 2 * M_PI * erand48(Xi);
+			double r2 = erand48(Xi);
+			double r2s = sqrt(r2);
+
+			Vec w = nl, u, v;
+			create_orthonorm_sys(w, u, v);
+			Vec d = (u * cos(r1) * r2s + v * sin(r1) * r2s + w * sqrt(1 - r2)).norm();
+
+			// For hemisphere sampling
+			/*
+			Vec samp_dir_ = sample_hemisphere(erand48(Xi), erand48(Xi));
+			Vec d;
+			d.x = Vec(u.x, v.x, w.x).dot_prod(samp_dir_);
+			d.y = Vec(u.y, v.y, w.y).dot_prod(samp_dir_);
+			d.z = Vec(u.z, v.z, w.z).dot_prod(samp_dir_);
+			d.norm();
+			*/
+
+			Vec e;
+			int s1 = objects.size(), s2 = light_sources.size();
+			for (int i = 0; i < s2; ++i) {
+				// Create orthonormal coord system and sample direction by solid angle
+				Vec sw = (light_sources[i]->center - inters.hit_point).norm(), su, sv;
+				create_orthonorm_sys(sw, su, sv);
+
+				double cos_a_max = sqrt(1 - light_sources[i]->radius * light_sources[i]->radius /
+					(inters.hit_point - light_sources[i]->center).dot_prod(inters.hit_point - light_sources[i]->center));
+				double eps1 = erand48(Xi), eps2 = erand48(Xi);
+				double cos_a = 1 - eps1 + eps1 * cos_a_max;
+				double sin_a = sqrt(1 - cos_a * cos_a);
+				double phi = 2 * M_PI * eps2;
+
+				// For hemisphere sampling
+				/*
+				Vec rand = sample_hemisphere(erand48(Xi), erand48(Xi));
+				Vec samp_dir;
+				samp_dir.x = Vec(su.x, sv.x, sw.x).dot_prod(rand);
+				samp_dir.y = Vec(su.y, sv.y, sw.y).dot_prod(rand);
+				samp_dir.z = Vec(su.z, sv.z, sw.z).dot_prod(rand);
+				samp_dir.norm();
+				*/
+
+				Vec samp_dir = (su * cos(phi) * sin_a + sv * sin(phi) * sin_a + sw * cos_a).norm();
+
+				// shoot shadow rays
+				if (intersect_scene(Ray(inters.hit_point, samp_dir)).object == light_sources[i]) {
+					double omega = 2 * M_PI * (1 - cos_a_max);
+					e = e + color.mult(light_sources[i]->emis * samp_dir.dot_prod(nl) * omega) * (1 / M_PI); // 1/PI for BRDF
+				}
+			}
+
+			return inters.object->emis * E + e + color.mult(path_tracing(Ray(inters.hit_point, d), depth, Xi, 0));
+		}
+		// Specular BRDF
+		else if (inters.object->refl == SPEC)
+			return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, r.dir - n * n.dot_prod(r.dir) * 2), depth, Xi)); // Angle of incidence == angle of reflection
+
+		// Refractive BRDF
+		Ray refl_ray(inters.hit_point, r.dir - n * n.dot_prod(r.dir) * 2);
+		bool into = n.dot_prod(nl) > 0; // Check if a ray goes in or out 
+		double refr_ind1 = 1, refr_ind2 = 1.5;
+		double refr_ratio = into ? refr_ind1 / refr_ind2 : refr_ind2 / refr_ind1;
+		double cos_incid_angle = r.dir.dot_prod(nl);
+		double cos2t = 1 - refr_ratio * refr_ratio * (1 - cos_incid_angle * cos_incid_angle);
+
+		if (cos2t < 0)
+			return inters.object->emis + color.mult(path_tracing(refl_ray, depth, Xi)); // Total internal reflection 
+
+		Vec tdir = (r.dir * refr_ratio - n * ((into ? 1 : -1) * (cos_incid_angle * refr_ratio + sqrt(cos2t)))).norm();
+		double a = refr_ind2 - refr_ind1;
+		double b = refr_ind2 + refr_ind1;
+		double c = 1 - (into ? -cos_incid_angle : tdir.dot_prod(n));
+
+		double F0 = a * a / (b * b);
+		double Fr = F0 + (1 - F0) * pow(c, 5);
+		double Tr = 1 - Fr;
+
+		double prob = 0.25 + 0.5 * Fr;
+		double refl_prob = Fr / prob, trans_prob = Tr / (1 - prob);
+
+		Vec result;
+		if (depth > 2) {
+			// Russian roulette
+			if (erand48(Xi) < prob)
+				result = path_tracing(refl_ray, depth, Xi) * refl_prob;
+			else
+				result = path_tracing(Ray(inters.hit_point, tdir), depth, Xi) * trans_prob;
+		}
+		else
+			result = path_tracing(refl_ray, depth, Xi) * Fr + path_tracing(Ray(inters.hit_point, tdir), depth, Xi) * Tr;
+
+		return inters.object->emis + color.mult(result);
+	}
+
+public:
+	Scene() {
+		light_sources = {
+			new Sphere(5.5, Vec(50, 81.6 - 15.5, 90), Vec(1, 1, 1) * 40, Vec(), DIFF),
+			//new Sphere(2.75, Vec(70, 81.6 - 30.5, 81.6), Vec(0, 1, 1) * 20,  Vec(), DIFF),
+			//new Sphere(1.375, Vec(20, 81.6 - 20, 81.6), Vec(1, 1, 0) * 40,  Vec(), DIFF)
+		};
+		// radius, position, emission, color, material
+		objects = {
+			new Sphere(1e5, Vec(1e5 + 1, 40.8, 81.6), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
+			new Sphere(1e5, Vec(-1e5 + 99, 40.8, 81.6), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
+			new Sphere(1e5, Vec(50, 40.8, 1e5), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
+			new Sphere(1e5, Vec(50, 40.8, -1e5 + 170), Vec(0.25, 0.25, 0.25), Vec(), DIFF), // Front wall
+			new Sphere(1e5, Vec(50, 1e5, 81.6), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
+			new Sphere(1e5, Vec(50, -1e5 + 81.6, 81.6),Vec(),Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
+
+			/*
+			new Triangle(Vec(0, 0, 170), Vec(0, 82.5, 170), Vec(), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
+			new Triangle(Vec(0, 82.5, 170), Vec(0, 82.5, 0), Vec(), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
+
+			new Triangle(Vec(99.5, 0, 0), Vec(99.5, 82.5, 0), Vec(99.5, 0, 170), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
+			new Triangle(Vec(99.5, 82.5, 0), Vec(99.5, 82.5, 170), Vec(99.5, 0, 170), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
+
+			new Triangle(Vec(), Vec(0, 82.5, 0), Vec(99.5, 0, 0), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
+			new Triangle(Vec(0, 82.5, 0), Vec(99.5, 82.5, 0), Vec(99.5, 0, 0), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
+
+			new Triangle(Vec(0, 0, 170), Vec(0, 82.5, 170), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Front wall
+			new Triangle(Vec(0, 82.5, 170), Vec(99.5, 82.5, 170), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Front wall
+
+			new Triangle(Vec(0, 0, 170), Vec(), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
+			new Triangle(Vec(), Vec(99.5, 0, 0), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
+
+			new Triangle(Vec(0, 82.5, 0), Vec(0, 82.5, 170), Vec(99.5, 82.5, 0), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
+			new Triangle(Vec(0, 82.5, 170), Vec(99.5, 82.5, 170), Vec(99.5, 82.5, 0), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
+			*/
+		};
+	}
+
+	~Scene() {
+		for (Mesh* m : meshes)
+			delete m;
+		for (Shape* o : objects)
+			delete o;
+	}
+
+	void fill_scene() {
+		Sphere* s1 = new Sphere(16.5, Vec(73, 16.5, 95), Vec(), Vec(1, 1, 1), REFR); // Glass sphere
+		objects.push_back(s1);
+
+		Mesh* m = new Mesh(Vec(0.85, 0.85, 0.85), (Refl_type)brdf_choice);
+		meshes.push_back(m);
+
+		int res = -1;
+		switch (model_choice) {
+		case 0:
+			objects.push_back(new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), (Refl_type)brdf_choice));
+			break;
+		case 1:
+			res = m->load_model("3D models/cube.obj");
+			if (res == 0) {
+				m->scale(15, 15, 15);
+				m->rotate(30, 1);
+				m->translate(Vec(30, 15, 80));
+			}
+			break;
+		case 2:
+			res = m->load_model("3D models/pinetree.obj");
+			if (res == 0) {
+				m->scale(0.2, 0.2, 0.2, false);
+				m->translate(Vec(100, 20, 80));
+			}
+			break;
+		case 3:
+			res = m->load_model("3D models/dog.obj");
+			if (res == 0) {
+				//m->scale(0.75, 0.75, 0.75);
+				//m->rotate(-90, 0);
+				m->rotate(20, 1);
+				m->translate(Vec(30, 0, 60));
+			}
+			break;
+		case 4:
+			res = m->load_model("3D models/worse_skull.obj");
+			if (res == 0) {
+				m->scale(5, 5, 5);
+				m->rotate(30, 1);
+				m->translate(Vec(30, 25, 80));
+			}
+			break;
+		}
+		if (res != 0)
+			objects.push_back(new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), (Refl_type)brdf_choice));
+
+		/*
+		m->load_model("3D models/triasphere.obj");
+		m->scale(15, 15, 15);
+		m->rotate(30, 1);
+		m->translate(Vec(30, 30, 80));
+		*/
+		/*
+		m->load_model("3D models/utah_teapot_lowpoly.obj");
+		m->scale(40, 40, 40);
+		m->rotate(30, 1);
+		m->translate(Vec(30, 30, 80));
+		*/
+		/*
+		m->load_model("3D models/worse_heart.obj");
+		m->scale(2, 2, 2);
+		m->rotate(-90, 0);
+		m->rotate(15, 1);
+		m->translate(Vec(35, 25, 60));
+		*/
+		for (auto* f : m->faces)
+			objects.push_back(f);
+
+		for (Sphere* l_s : light_sources)
+			objects.push_back(l_s);
+	}
+
+	void render_scene() {
+		Vec result;
+		Ray camera(Vec(50, 52, 295.6), Vec(0, -0.042612, -1).norm());
+		Vec camera_x = Vec(width * 0.5135 / height),
+			camera_y = (camera_x % camera.dir).norm() * 0.5135;
+		const int bar_width = 50; // Progress bat width
+		const double sigma = 1.5; // Standard deviation
+#pragma omp parallel for schedule(dynamic, 1) private(result)       // Use OpenMP 
+		for (int y = 0; y < height; y++) {                       // Go through image rows 
+#pragma omp critical
+			{
+				float percent = 100.0f * y / (height - 1);
+				int filled = static_cast<int>(percent * bar_width / 100.0f);
+				filled = std::max(0, std::min(bar_width, filled));
+				std::string bar(filled, '=');
+				bar.append(bar_width - filled, ' ');
+				fprintf(stderr, "\rRendering (%d samples per pixel): [%s] %5.2f%%", samples * 4, bar.c_str(), percent);
+				fflush(stderr);
+			}
+			for (unsigned short x = 0, Xi[3] = { 0, 0, y * y * y }; x < width; x++) { // Go through image cols 
+				// 2x2 subpixel rows 
+				for (int sy = 0, i = (height - y - 1) * width + x; sy < 2; sy++)
+					// 2x2 subpixel cols 
+					for (int sx = 0; sx < 2; sx++, result = Vec()) {
+						for (int s = 0; s < samples; s++) {
+							/*
+							double r1 = erand48(Xi), r2 = erand48(Xi);
+							double z1, z2;
+							box_muller(r1, r2, z1, z2);
+							double dx = z1 * sigma, dy = z2 * sigma;
+							dx = std::clamp(dx, -1.0, 1.0);
+							dy = std::clamp(dy, -1.0, 1.0);
+							*/
+							double r1 = 2 * erand48(Xi), dx = r1 < 1 ? sqrt(r1) - 1 : 1 - sqrt(2 - r1);
+							double r2 = 2 * erand48(Xi), dy = r2 < 1 ? sqrt(r2) - 1 : 1 - sqrt(2 - r2);
+							Vec d = camera_x * (((sx + 0.5 + dx) / 2 + x) / width - 0.5) +
+								camera_y * (((sy + 0.5 + dy) / 2 + y) / height - 0.5) + camera.dir;
+							result = result + path_tracing(Ray(camera.orig + d * 140, d.norm()), 0, Xi) * (1.0 / samples);
+						}
+						image[i] = image[i] + Vec(clamp01(result.x), clamp01(result.y), clamp01(result.z)) * 0.25;
+					}
+			}
+		}
+
+	}
+
+	void render_scene_wout_ssampling(int samples) {
+		Vec result;
+		Ray camera(Vec(50, 52, 295.6), Vec(0, -0.042612, -1).norm());
+		Vec camera_x = Vec(width * 0.5135 / height),
+			camera_y = (camera_x % camera.dir).norm() * 0.5135;
+		const int bar_width = 50; // Progress bar width
+		const double sigma = 1.5; // Standard deviation
+#pragma omp parallel for schedule(dynamic, 1) private(result)       // Use OpenMP 
+		for (int y = 0; y < height; y++) {                       // Go through image rows 
+#pragma omp critical
+			{
+				float percent = 100.0f * y / (height - 1);
+				int filled = static_cast<int>(percent * bar_width / 100.0f);
+				filled = std::max(0, std::min(bar_width, filled));
+				std::string bar(filled, '=');
+				bar.append(bar_width - filled, ' ');
+				fprintf(stderr, "\rRendering (%d samples per pixel): [%s] %5.2f%%", samples, bar.c_str(), percent);
+				fflush(stderr);
+			}
+			for (unsigned short x = 0, Xi[3] = { 0, 0, y * y * y }; x < width; x++) { // Go through image cols 
+				int i = (height - y - 1) * width + x; // Index in the image array
+				result = Vec(); // Reset result for the current pixel
+
+				for (int s = 0; s < samples; s++) {
+					double r1 = erand48(Xi), r2 = erand48(Xi);
+					double z1, z2;
+					box_muller(r1, r2, z1, z2);
+					double dx = z1 * sigma, dy = z2 * sigma;
+					dx = std::clamp(dx, -1.0, 1.0);
+					dy = std::clamp(dy, -1.0, 1.0);
+
+					//double r1 = 2 * erand48(Xi), dx = r1 < 1 ? sqrt(r1) - 1 : 1 - sqrt(2 - r1);
+					//double r2 = 2 * erand48(Xi), dy = r2 < 1 ? sqrt(r2) - 1 : 1 - sqrt(2 - r2);
+					Vec d = camera_x * ((x + dx + 0.5) / width - 0.5) +
+						camera_y * ((y + dy + 0.5) / height - 0.5) + camera.dir;
+					result = result + path_tracing(Ray(camera.orig + d * 140, d.norm()), 0, Xi) * (1.0 / samples);
+				}
+				image[i] = image[i] + Vec(clamp01(result.x), clamp01(result.y), clamp01(result.z));
+			}
+		}
+	}
 };
-
-// radius, position, emission, color, material
-std::vector<Shape*> objects = {
-	new Sphere(1e5, Vec(1e5 + 1, 40.8, 81.6), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
-	new Sphere(1e5, Vec(-1e5 + 99, 40.8, 81.6), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
-	new Sphere(1e5, Vec(50, 40.8, 1e5), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
-	new Sphere(1e5, Vec(50, 40.8, -1e5 + 170), Vec(), Vec(), DIFF), // Front wall
-	new Sphere(1e5, Vec(50, 1e5, 81.6), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
-	new Sphere(1e5, Vec(50, -1e5 + 81.6, 81.6),Vec(),Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
-
-	/*
-	new Triangle(Vec(0, 0, 170), Vec(0, 82.5, 170), Vec(), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
-	new Triangle(Vec(0, 82.5, 170), Vec(0, 82.5, 0), Vec(), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
-
-	new Triangle(Vec(99.5, 0, 0), Vec(99.5, 82.5, 0), Vec(99.5, 0, 170), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
-	new Triangle(Vec(99.5, 82.5, 0), Vec(99.5, 82.5, 170), Vec(99.5, 0, 170), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
-
-	new Triangle(Vec(), Vec(0, 82.5, 0), Vec(99.5, 0, 0), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
-	new Triangle(Vec(0, 82.5, 0), Vec(99.5, 82.5, 0), Vec(99.5, 0, 0), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
-
-	new Triangle(Vec(0, 0, 170), Vec(0, 82.5, 170), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Front wall
-	new Triangle(Vec(0, 82.5, 170), Vec(99.5, 82.5, 170), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Front wall
-
-	new Triangle(Vec(0, 0, 170), Vec(), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
-	new Triangle(Vec(), Vec(99.5, 0, 0), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
-
-	new Triangle(Vec(0, 82.5, 0), Vec(0, 82.5, 170), Vec(99.5, 82.5, 0), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
-	new Triangle(Vec(0, 82.5, 170), Vec(99.5, 82.5, 170), Vec(99.5, 82.5, 0), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
-	*/
-};
-
-std::vector<Mesh*> meshes;
-
-void fill_scene() {
-	Sphere* s1 = new Sphere(16.5, Vec(73, 16.5, 95), Vec(), Vec(1, 1, 1), REFR); // Glass sphere
-	objects.push_back(s1);
-
-	//Mesh* m = Mesh::create_hexahedron(Vec(33, 15, 65), 15, M_PI / 4, Vec(0.65, 0.65, 0.65), DIFF);
-	Mesh* m = new Mesh(Vec(1, 1, 1), (Refl_type)brdf_choice);
-	meshes.push_back(m);
-
-	int res = -1;
-	switch (model_choice) {
-	case 0:
-		objects.push_back(new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), (Refl_type)brdf_choice));
-		break;
-	case 1:
-		res = m->load_model("3D models/cube.obj");
-		if (res == 0) {
-			m->scale(15, 15, 15);
-			m->rotate(30, 1);
-			m->translate(Vec(30, 15, 80));
-		}
-		break;
-	case 2:
-		res = m->load_model("3D models/pinetree.obj");
-		if (res == 0) {
-			m->scale(0.2, 0.2, 0.2, false);
-			m->translate(Vec(100, 20, 80));
-		}
-		break;
-	case 3:
-		res = m->load_model("3D models/dog.obj");
-		if (res == 0) {
-			m->scale(0.75, 0.75, 0.75);
-			m->rotate(-90, 0);
-			m->rotate(20, 1);
-			m->translate(Vec(30, 35, 60));
-		}
-		break;
-	case 4:
-		res = m->load_model("3D models/worse_skull.obj");
-		if (res == 0) {
-			m->scale(5, 5, 5);
-			m->rotate(30, 1);
-			m->translate(Vec(30, 25, 80));
-		}
-		break;
-	}
-	if (res != 0)
-		objects.push_back(new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), (Refl_type)brdf_choice));
-
-	/*
-	m->load_model("3D models/triasphere.obj");
-	m->scale(15, 15, 15);
-	m->rotate(30, 1);
-	m->translate(Vec(30, 30, 80));
-	*/
-	/*
-	m->load_model("3D models/utah_teapot_lowpoly.obj");
-	m->scale(40, 40, 40);
-	m->rotate(30, 1);
-	m->translate(Vec(30, 30, 80));
-	*/
-	/*
-	m->load_model("3D models/worse_heart.obj");
-	m->scale(2, 2, 2);
-	m->rotate(-90, 0);
-	m->rotate(15, 1);
-	m->translate(Vec(35, 25, 60));
-	*/
-	
-	for (auto* f : m->faces)
-		objects.push_back(f);
-
-	for (Sphere* l_s : light_sources)
-		objects.push_back(l_s);
-}
-
-void create_orthonorm_sys(const Vec& v1, Vec& v2, Vec& v3) {
-	// Projection to y = 0 plane and normalized orthogonal vector construction
-	if (std::abs(v1.x) > std::abs(v1.y)) {
-		double inv_len = 1.0 / sqrt(v1.x * v1.x + v1.z * v1.z);
-		v2 = Vec(-v1.z * inv_len, 0.0, v1.x * inv_len);
-	}
-	// Projection to x = 0 plane and normalized orthogonal vector construction
-	else {
-		double inv_len = 1.0 / sqrt(v1.y * v1.y + v1.z * v1.z);
-		v2 = Vec(0.0, v1.z * inv_len, -v1.y * inv_len);
-	}
-	v3 = v1 % v2;
-}
-
-Vec sample_hemisphere(double u1, double u2) {
-	const double r = sqrt(1.0 - u1 * u1);
-	const double phi = 2 * M_PI * u2;
-	return Vec(cos(phi) * r, sin(phi) * r, u1);
-}
 
 GLuint create_texture() {
 	auto* pixels = new unsigned char[width * height * 3];
@@ -186,219 +391,6 @@ GLuint create_texture() {
 	delete[] pixels;
 
 	return texture_id;
-}
-
-inline Intersection intersect_scene(const Ray& r) {
-	Intersection closest_inters(LDBL_MAX);
-	for (Shape* obj : objects) {
-		Intersection inters = obj->intersect(r);
-		if (inters.object && inters < closest_inters)
-			closest_inters = inters;
-	}
-	return closest_inters;
-}
-
-Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
-	if (depth > 500) return Vec();
-	Intersection inters = intersect_scene(r);
-	if (!inters.object) return Vec(); // Return black if there is no intersection 
-
-	inters.calc_inters_point(r);
-	Vec n = inters.object->get_normal(inters);
-	Vec nl = n.dot_prod(r.dir) < 0 ? n : n * -1;
-	Vec color = inters.object->color;
-	double rr_prob = std::max(color.x, std::max(color.y, color.z));
-
-	// Russian Roulette for path termination
-	if (++depth > 5 || !rr_prob) {
-		if (erand48(Xi) < rr_prob)
-			color = color * (1 / rr_prob);
-		else
-			return inters.object->emis * E;
-	}
-
-	// Diffuse BRDF
-	if (inters.object->refl == DIFF) {
-		double r1 = 2 * M_PI * erand48(Xi);
-		double r2 = erand48(Xi);
-		double r2s = sqrt(r2);
-
-		Vec w = nl, u, v;
-		create_orthonorm_sys(w, u, v);
-		Vec d = (u * cos(r1) * r2s + v * sin(r1) * r2s + w * sqrt(1 - r2)).norm();
-
-		// For hemisphere sampling
-		/*
-		Vec samp_dir_ = sample_hemisphere(erand48(Xi), erand48(Xi));
-		Vec d;
-		d.x = Vec(u.x, v.x, w.x).dot_prod(samp_dir_);
-		d.y = Vec(u.y, v.y, w.y).dot_prod(samp_dir_);
-		d.z = Vec(u.z, v.z, w.z).dot_prod(samp_dir_);
-		d.norm();
-		*/
-
-		Vec e;
-		int s1 = objects.size(), s2 = light_sources.size();
-		for (int i = 0; i < s2; ++i) {
-			// Create orthonormal coord system and sample direction by solid angle
-			Vec sw = (light_sources[i]->center - inters.hit_point).norm(), su, sv;
-			create_orthonorm_sys(sw, su, sv);
-
-			double cos_a_max = sqrt(1 - light_sources[i]->radius * light_sources[i]->radius /
-				(inters.hit_point - light_sources[i]->center).dot_prod(inters.hit_point - light_sources[i]->center));
-			double eps1 = erand48(Xi), eps2 = erand48(Xi);
-			double cos_a = 1 - eps1 + eps1 * cos_a_max;
-			double sin_a = sqrt(1 - cos_a * cos_a);
-			double phi = 2 * M_PI * eps2;
-
-			// For hemisphere sampling
-			/*
-			Vec rand = sample_hemisphere(erand48(Xi), erand48(Xi));
-			Vec samp_dir;
-			samp_dir.x = Vec(su.x, sv.x, sw.x).dot_prod(rand);
-			samp_dir.y = Vec(su.y, sv.y, sw.y).dot_prod(rand);
-			samp_dir.z = Vec(su.z, sv.z, sw.z).dot_prod(rand);
-			samp_dir.norm();
-			*/
-
-			Vec samp_dir = (su * cos(phi) * sin_a + sv * sin(phi) * sin_a + sw * cos_a).norm();
-
-			// shoot shadow rays
-			if (intersect_scene(Ray(inters.hit_point, samp_dir)).object == light_sources[i]) {
-				double omega = 2 * M_PI * (1 - cos_a_max);
-				e = e + color.mult(light_sources[i]->emis * samp_dir.dot_prod(nl) * omega) * (1 / M_PI); // 1/PI for BRDF
-			}
-		}
-
-		return inters.object->emis * E + e + color.mult(path_tracing(Ray(inters.hit_point, d), depth, Xi, 0));
-	}
-	// Specular BRDF
-	else if (inters.object->refl == SPEC)
-		return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, r.dir - n * n.dot_prod(r.dir) * 2), depth, Xi)); // Angle of incidence == angle of reflection
-
-	// Refractive BRDF
-	Ray refl_ray(inters.hit_point, r.dir - n * n.dot_prod(r.dir) * 2);
-	bool into = n.dot_prod(nl) > 0; // Check if a ray goes in or out 
-	double refr_ind1 = 1, refr_ind2 = 1.5;
-	double refr_ratio = into ? refr_ind1 / refr_ind2 : refr_ind2 / refr_ind1;
-	double cos_incid_angle = r.dir.dot_prod(nl);
-	double cos2t = 1 - refr_ratio * refr_ratio * (1 - cos_incid_angle * cos_incid_angle);
-
-	if (cos2t < 0)
-		return inters.object->emis + color.mult(path_tracing(refl_ray, depth, Xi)); // Total internal reflection 
-
-	Vec tdir = (r.dir * refr_ratio - n * ((into ? 1 : -1) * (cos_incid_angle * refr_ratio + sqrt(cos2t)))).norm();
-	double a = refr_ind2 - refr_ind1;
-	double b = refr_ind2 + refr_ind1;
-	double c = 1 - (into ? -cos_incid_angle : tdir.dot_prod(n));
-
-	double F0 = a * a / (b * b);
-	double Fr = F0 + (1 - F0) * pow(c, 5);
-	double Tr = 1 - Fr;
-
-	double prob = 0.25 + 0.5 * Fr;
-	double refl_prob = Fr / prob, trans_prob = Tr / (1 - prob);
-
-	Vec result;
-	if (depth > 2) {
-		// Russian roulette
-		if (erand48(Xi) < prob)
-			result = path_tracing(refl_ray, depth, Xi) * refl_prob;
-		else
-			result = path_tracing(Ray(inters.hit_point, tdir), depth, Xi) * trans_prob;
-	}
-	else
-		result = path_tracing(refl_ray, depth, Xi) * Fr + path_tracing(Ray(inters.hit_point, tdir), depth, Xi) * Tr;
-
-	return inters.object->emis + color.mult(result);
-}
-
-void render_scene() {
-	Vec result;
-	Ray camera(Vec(50, 52, 295.6), Vec(0, -0.042612, -1).norm());
-	Vec camera_x = Vec(width * 0.5135 / height),
-		camera_y = (camera_x % camera.dir).norm() * 0.5135;
-	const int bar_width = 50; // Progress bat width
-	const double sigma = 1.5; // Standard deviation
-#pragma omp parallel for schedule(dynamic, 1) private(result)       // Use OpenMP 
-	for (int y = 0; y < height; y++) {                       // Go through image rows 
-#pragma omp critical
-		{
-			float percent = 100.0f * y / (height - 1);
-			int filled = static_cast<int>(percent * bar_width / 100.0f);
-			filled = std::max(0, std::min(bar_width, filled));
-			std::string bar(filled, '=');
-			bar.append(bar_width - filled, ' ');
-			fprintf(stderr, "\rRendering (%d samples per pixel): [%s] %5.2f%%", samples * 4, bar.c_str(), percent);
-			fflush(stderr);
-		}
-		for (unsigned short x = 0, Xi[3] = { 0, 0, y * y * y }; x < width; x++) { // Go through image cols 
-			// 2x2 subpixel rows 
-			for (int sy = 0, i = (height - y - 1) * width + x; sy < 2; sy++)
-				// 2x2 subpixel cols 
-				for (int sx = 0; sx < 2; sx++, result = Vec()) {
-					for (int s = 0; s < samples; s++) {
-						/*
-						double r1 = erand48(Xi), r2 = erand48(Xi);
-						double z1, z2;
-						box_muller(r1, r2, z1, z2);
-						double dx = z1 * sigma, dy = z2 * sigma;
-						dx = std::clamp(dx, -1.0, 1.0);
-						dy = std::clamp(dy, -1.0, 1.0);
-						*/
-						double r1 = 2 * erand48(Xi), dx = r1 < 1 ? sqrt(r1) - 1 : 1 - sqrt(2 - r1);
-						double r2 = 2 * erand48(Xi), dy = r2 < 1 ? sqrt(r2) - 1 : 1 - sqrt(2 - r2);
-						Vec d = camera_x * (((sx + 0.5 + dx) / 2 + x) / width - 0.5) +
-							camera_y * (((sy + 0.5 + dy) / 2 + y) / height - 0.5) + camera.dir;
-						result = result + path_tracing(Ray(camera.orig + d * 140, d.norm()), 0, Xi) * (1.0 / samples);
-					}
-					image[i] = image[i] + Vec(clamp01(result.x), clamp01(result.y), clamp01(result.z)) * 0.25;
-				}
-		}
-	}
-
-}
-
-void render_scene_wout_ssampling(int samples) {
-	Vec result;
-	Ray camera(Vec(50, 52, 295.6), Vec(0, -0.042612, -1).norm());
-	Vec camera_x = Vec(width * 0.5135 / height),
-		camera_y = (camera_x % camera.dir).norm() * 0.5135;
-	const int bar_width = 50; // Progress bar width
-	const double sigma = 0.7; // Standard deviation
-#pragma omp parallel for schedule(dynamic, 1) private(result)       // Use OpenMP 
-	for (int y = 0; y < height; y++) {                       // Go through image rows 
-#pragma omp critical
-		{
-			float percent = 100.0f * y / (height - 1);
-			int filled = static_cast<int>(percent * bar_width / 100.0f);
-			filled = std::max(0, std::min(bar_width, filled));
-			std::string bar(filled, '=');
-			bar.append(bar_width - filled, ' ');
-			fprintf(stderr, "\rRendering (%d samples per pixel): [%s] %5.2f%%", samples, bar.c_str(), percent);
-			fflush(stderr);
-		}
-		for (unsigned short x = 0, Xi[3] = { 0, 0, y * y * y }; x < width; x++) { // Go through image cols 
-			int i = (height - y - 1) * width + x; // Index in the image array
-			result = Vec(); // Reset result for the current pixel
-
-			for (int s = 0; s < samples; s++) {
-				double r1 = erand48(Xi), r2 = erand48(Xi);
-				double z1, z2;
-				box_muller(r1, r2, z1, z2);
-				double dx = z1 * sigma, dy = z2 * sigma;
-				//dx = std::clamp(dx, -1.0, 1.0);
-				//dy = std::clamp(dy, -1.0, 1.0);
-
-				//double r1 = 2 * erand48(Xi), dx = r1 < 1 ? sqrt(r1) - 1 : 1 - sqrt(2 - r1);
-				//double r2 = 2 * erand48(Xi), dy = r2 < 1 ? sqrt(r2) - 1 : 1 - sqrt(2 - r2);
-				Vec d = camera_x * ((x + dx + 0.5) / width - 0.5) +
-					camera_y * ((y + dy + 0.5) / height - 0.5) + camera.dir;
-				result = result + path_tracing(Ray(camera.orig + d * 140, d.norm()), 0, Xi) * (1.0 / samples);
-			}
-			image[i] = image[i] + Vec(clamp01(result.x), clamp01(result.y), clamp01(result.z));
-		}
-	}
 }
 
 void user_interaction() {
@@ -458,10 +450,11 @@ int main() {
 	user_interaction();
 
 	image = new Vec[width * height];
-	fill_scene();
+	Scene sc;
+	sc.fill_scene();	
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
-	render_scene();
-	//render_scene_wout_ssampling(samples * 4);
+	sc.render_scene();
+	//sc.render_scene_wout_ssampling(samples * 4);
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	printf("\nTime elapsed: %d ms;\n", std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
 	glfwSetErrorCallback(glfw_error_callback);
@@ -569,11 +562,6 @@ int main() {
 	ImGui::DestroyContext();
 	glfwDestroyWindow(window);
 	glfwTerminate();
-
-	for (Mesh* m : meshes)
-		delete m;
-	for (Shape* o : objects)
-		delete o;
 	std::remove("imgui.ini");
 
 	return 0;
