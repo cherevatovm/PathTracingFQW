@@ -17,6 +17,12 @@ struct Vec {
 		z += v.z;
 		return *this;
 	}
+	Vec& operator-=(const Vec& v) {
+		x -= v.x;
+		y -= v.y;
+		z -= v.z;
+		return *this;
+	}
 	Vec operator-(const Vec& v) const { return Vec(x - v.x, y - v.y, z - v.z); }
 	Vec operator-() const { return Vec(-x, -y, -z); }
 	Vec operator*(double scalar) const { return Vec(x * scalar, y * scalar, z * scalar); }

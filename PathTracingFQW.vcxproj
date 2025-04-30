@@ -137,6 +137,7 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="BVH_related.h" />
     <ClInclude Include="Bounds.h" />
     <ClInclude Include="ImFileDialog\ImFileDialog.h" />
     <ClInclude Include="Intersection.h" />

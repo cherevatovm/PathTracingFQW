@@ -19,6 +19,7 @@
 #include "Vec.h"
 #include "Ray.h"
 #include "Shape.h"
+#include "BVH_related.h"
 #include "Rand_om.h"
 #include "Utility.h"
 #include "ImFileDialog/ImFileDialog.h"
@@ -36,18 +37,96 @@ int model_choice = 0, brdf_choice = 0;
 
 class Scene {
 private:
+	std::vector<BoundingInfo> all_bounding_data;
+	std::vector<BVH_Node> bv_hierarchy;
+	std::vector<Shape*> bounded_objects;
+	std::vector<Shape*> unbounded_objects;
 	std::vector<Sphere*> light_sources;
-	std::vector<Shape*> objects;
 	std::vector<Mesh*> meshes;
 
-	inline Intersection intersect_scene(const Ray& r) {
+	Intersection intersect_scene(const Ray& r) {
 		Intersection closest_inters(LDBL_MAX);
-		for (Shape* obj : objects) {
+		for (Shape* obj : unbounded_objects) {
 			Intersection inters = obj->intersect(r);
 			if (inters.object && inters < closest_inters)
 				closest_inters = inters;
 		}
+
+		if (!bv_hierarchy.empty()) {
+			uint32_t stack[64];
+			uint32_t cur_stack_size = 0;
+			uint32_t node_num = 0;
+			Vec reverse_dir(1 / r.dir.x, 1 / r.dir.y, 1 / r.dir.z);
+			while (true) {			
+				BVH_Node& node = bv_hierarchy[node_num];
+				if (node.aabb.intersect(r, reverse_dir, closest_inters.t)) {
+					if (node.obj_count > 0) {	
+						// Leaf
+						for (int i = 0; i < node.obj_count; ++i) {
+							Intersection inters = bounded_objects[node.first_obj_ind + i]->intersect(r);
+							if (inters.object && inters < closest_inters)
+								closest_inters = inters;
+						}
+						if (cur_stack_size == 0)
+							break;
+						node_num = stack[--cur_stack_size];
+					}
+					else {	
+						// Interior node
+						if (r.dir[node.split_axis] < 0) {
+							stack[cur_stack_size++] = node_num + 1;
+							node_num = node.second_child_ind;
+						}
+						else {
+							stack[cur_stack_size++] = node.second_child_ind;
+							node_num = node_num + 1;
+						}
+					}
+				}
+				else {
+					if (cur_stack_size == 0)
+						break;
+					node_num = stack[--cur_stack_size];
+				}
+			}
+		}
+
 		return closest_inters;
+	}
+
+	void split_bounds(const std::vector<BoundingInfo>::iterator begin, 
+		const std::vector<BoundingInfo>::iterator end, uint8_t max_leaf_obj_num) {
+		bv_hierarchy.push_back(BVH_Node());
+		auto cur_node = bv_hierarchy.end();
+		--cur_node;
+
+		uint32_t obj_cnt = end - begin;
+		if (obj_cnt <= max_leaf_obj_num) {
+			// Make cur_node a leaf
+			cur_node->obj_count = obj_cnt;
+			for (auto i = begin; i != end; ++i)
+				cur_node->aabb = Bounds3::find_union(cur_node->aabb, i->aabb);
+			cur_node->first_obj_ind = begin - all_bounding_data.begin();
+		}
+		else {
+			// Make cur_node an interior node
+			cur_node->obj_count = 0;
+			Bounds3 centroid_aabb;
+			for (auto i = begin; i != end; ++i)
+				centroid_aabb = Bounds3::find_union(centroid_aabb, i->centroid);
+
+			cur_node->split_axis = centroid_aabb.largest_dim();
+			auto median = begin + (end - begin) / 2;
+			std::nth_element(begin, median, end, CentroidComparator(cur_node->split_axis));
+
+			// Recursively call for left and right child
+			size_t firstChildIndex = bv_hierarchy.size();
+			split_bounds(begin, median, max_leaf_obj_num);
+			cur_node->second_child_ind = bv_hierarchy.size();
+			split_bounds(median, end, max_leaf_obj_num);
+			
+			cur_node->aabb = Bounds3::find_union(bv_hierarchy[firstChildIndex].aabb, bv_hierarchy[cur_node->second_child_ind].aabb);
+		}
 	}
 
 	Vec path_tracing(const Ray& r, int depth, unsigned short* Xi, int E = 1) {
@@ -90,8 +169,7 @@ private:
 			*/
 
 			Vec e;
-			int s1 = objects.size(), s2 = light_sources.size();
-			for (int i = 0; i < s2; ++i) {
+			for (int i = 0; i < light_sources.size(); ++i) {
 				// Create orthonormal coord system and sample direction by solid angle
 				Vec sw = (light_sources[i]->center - inters.hit_point).norm(), su, sv;
 				create_orthonorm_sys(sw, su, sv);
@@ -172,12 +250,13 @@ public:
 			//new Sphere(2.75, Vec(70, 81.6 - 30.5, 81.6), Vec(0, 1, 1) * 20,  Vec(), DIFF),
 			//new Sphere(1.375, Vec(20, 81.6 - 20, 81.6), Vec(1, 1, 0) * 40,  Vec(), DIFF)
 		};
+		
 		// radius, position, emission, color, material
-		objects = {
+		unbounded_objects = {
 			new Sphere(1e5, Vec(1e5 + 1, 40.8, 81.6), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
 			new Sphere(1e5, Vec(-1e5 + 99, 40.8, 81.6), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
 			new Sphere(1e5, Vec(50, 40.8, 1e5), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
-			new Sphere(1e5, Vec(50, 40.8, -1e5 + 170), Vec(0.25, 0.25, 0.25), Vec(), DIFF), // Front wall
+			new Sphere(1e5, Vec(50, 40.8, -1e5 + 170), Vec(), Vec(), DIFF), // Front wall
 			new Sphere(1e5, Vec(50, 1e5, 81.6), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
 			new Sphere(1e5, Vec(50, -1e5 + 81.6, 81.6),Vec(),Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
 
@@ -206,13 +285,22 @@ public:
 	~Scene() {
 		for (Mesh* m : meshes)
 			delete m;
-		for (Shape* o : objects)
+		for (Shape* o : unbounded_objects)
+			delete o;
+		for (Shape* o : bounded_objects)
 			delete o;
 	}
 
-	void fill_scene() {
-		Sphere* s1 = new Sphere(16.5, Vec(73, 16.5, 95), Vec(), Vec(1, 1, 1), REFR); // Glass sphere
-		objects.push_back(s1);
+	void add_object(Shape* obj) {
+		Bounds3 aabb = obj->get_bounds();
+		if (aabb.is_empty())
+			unbounded_objects.push_back(obj);
+		else
+			all_bounding_data.push_back(BoundingInfo(obj, aabb));
+	}
+
+	void fill() {
+		add_object(new Sphere(16.5, Vec(73, 16.5, 95), Vec(), Vec(1, 1, 1), REFR)); // Glass sphere
 
 		Mesh* m = new Mesh(Vec(0.85, 0.85, 0.85), (Refl_type)brdf_choice);
 		meshes.push_back(m);
@@ -220,7 +308,7 @@ public:
 		int res = -1;
 		switch (model_choice) {
 		case 0:
-			objects.push_back(new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), (Refl_type)brdf_choice));
+			add_object(new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), (Refl_type)brdf_choice));
 			break;
 		case 1:
 			res = m->load_model("3D models/cube.obj");
@@ -240,24 +328,30 @@ public:
 		case 3:
 			res = m->load_model("3D models/dog.obj");
 			if (res == 0) {
-				//m->scale(0.75, 0.75, 0.75);
-				//m->rotate(-90, 0);
 				m->rotate(20, 1);
 				m->translate(Vec(30, 0, 60));
 			}
 			break;
 		case 4:
-			res = m->load_model("3D models/worse_skull.obj");
+			res = m->load_model("3D models/skull.obj");
 			if (res == 0) {
 				m->scale(5, 5, 5);
 				m->rotate(30, 1);
 				m->translate(Vec(30, 25, 80));
 			}
 			break;
+		case 5:
+			res = m->load_model("3D models/heart.obj");
+			if (res == 0) {
+				m->scale(2, 2, 2);
+				m->rotate(-90, 0);
+				m->rotate(15, 1);
+				m->translate(Vec(35, 25, 60));
+			}
+			break;
 		}
 		if (res != 0)
-			objects.push_back(new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), (Refl_type)brdf_choice));
-
+			add_object(new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), (Refl_type)brdf_choice));
 		/*
 		m->load_model("3D models/triasphere.obj");
 		m->scale(15, 15, 15);
@@ -270,26 +364,35 @@ public:
 		m->rotate(30, 1);
 		m->translate(Vec(30, 30, 80));
 		*/
-		/*
-		m->load_model("3D models/worse_heart.obj");
-		m->scale(2, 2, 2);
-		m->rotate(-90, 0);
-		m->rotate(15, 1);
-		m->translate(Vec(35, 25, 60));
-		*/
+		
 		for (auto* f : m->faces)
-			objects.push_back(f);
+			add_object(f);
 
 		for (Sphere* l_s : light_sources)
-			objects.push_back(l_s);
+			add_object(l_s);
 	}
 
-	void render_scene() {
+	void rebuild_bvh(uint8_t max_leaf_obj_num = 1) {
+		if (max_leaf_obj_num <= 0)
+			max_leaf_obj_num = 1;
+
+		// Depth-first representation of bvh stored in bv_hierarchy vec
+		bv_hierarchy.clear();
+		bv_hierarchy.reserve(all_bounding_data.size() * 4);
+		split_bounds(all_bounding_data.begin(), all_bounding_data.end(), max_leaf_obj_num);
+
+		bounded_objects.clear();
+		bounded_objects.reserve(all_bounding_data.size());
+		for (BoundingInfo& b_inf : all_bounding_data)
+			bounded_objects.push_back(b_inf.obj);
+	}
+
+	void render_with_supersampling() {
 		Vec result;
 		Ray camera(Vec(50, 52, 295.6), Vec(0, -0.042612, -1).norm());
 		Vec camera_x = Vec(width * 0.5135 / height),
 			camera_y = (camera_x % camera.dir).norm() * 0.5135;
-		const int bar_width = 50; // Progress bat width
+		const int bar_width = 50; // Progress bar width
 		const double sigma = 1.5; // Standard deviation
 #pragma omp parallel for schedule(dynamic, 1) private(result)       // Use OpenMP 
 		for (int y = 0; y < height; y++) {                       // Go through image rows 
@@ -330,7 +433,7 @@ public:
 
 	}
 
-	void render_scene_wout_ssampling(int samples) {
+	void render_wout_supersampling(int samples) {
 		Vec result;
 		Ray camera(Vec(50, 52, 295.6), Vec(0, -0.042612, -1).norm());
 		Vec camera_x = Vec(width * 0.5135 / height),
@@ -406,9 +509,9 @@ void user_interaction() {
 	std::cout << "       |                 |/" << std::endl;
 	std::cout << "       +-----------------+\n" << std::endl;
 
-	std::cout << "Choose a model to load:\n1 - Sphere\n2 - Cube\n3 - Pinetree\n4 - Dog\n5 - Skull" << std::endl;
+	std::cout << "Choose a model to load:\n1 - Sphere\n2 - Cube\n3 - Pinetree\n4 - Dog\n5 - Skull\n6 - Heart" << std::endl;
 	std::cin >> model_choice;
-	if (model_choice >= 1 && model_choice <= 5)
+	if (model_choice >= 1 && model_choice <= 6)
 		--model_choice;
 	else {
 		std::cout << "Entered incorrect model ID, a sphere will be used." << std::endl;
@@ -451,10 +554,12 @@ int main() {
 
 	image = new Vec[width * height];
 	Scene sc;
-	sc.fill_scene();	
+	sc.fill();
+	sc.rebuild_bvh(2);
+	
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
-	sc.render_scene();
-	//sc.render_scene_wout_ssampling(samples * 4);
+	sc.render_with_supersampling();
+	//sc.render_wout_supersampling(samples * 4);
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	printf("\nTime elapsed: %d ms;\n", std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
 	glfwSetErrorCallback(glfw_error_callback);
@@ -495,11 +600,11 @@ int main() {
 		glBindTexture(GL_TEXTURE_2D, 0);
 
 		return (void*)tex;
-	};
+		};
 	ifd::FileDialog::Instance().DeleteTexture = [](void* tex) {
 		GLuint texID = (GLuint)tex;
 		glDeleteTextures(1, &texID);
-	};
+		};
 
 	GLuint tex_id = create_texture();
 	// Save the result to png image

@@ -46,14 +46,13 @@ public:
 		return 2;
 	}
 
-	bool intersect(const Vec& orig, const Vec& dir, double t_max,
-		double* hit_t0, double* hit_t1) {
+	bool intersect(const Ray& r, const Vec& reverse_dir, double t_max = LDBL_MAX, 
+		double* hit_t0 = nullptr, double* hit_t1 = nullptr) const {
 		double t0 = 0, t1 = t_max;
-		std::vector<double> reverse_dir{ 1 / dir.x, 1 / dir.y, 1 / dir.z };
 
 		for (int i = 0; i < 3; ++i) {
-			double t_near = (p_min[i] - orig[i]) * reverse_dir[i];
-			double t_far = (p_max[i] - orig[i]) * reverse_dir[i];
+			double t_near = (p_min[i] - r.orig[i]) * reverse_dir[i];
+			double t_far = (p_max[i] - r.orig[i]) * reverse_dir[i];
 
 			if (t_near > t_far)
 				std::swap(t_near, t_far);
@@ -72,42 +71,20 @@ public:
 		return true;
 	}
 
-	static Bounds3 find_union(const Bounds3& aabb, const Vec& p) {
+	static inline Bounds3 find_union(const Bounds3& aabb, const Vec& p) {
 		return Bounds3(Vec::min(aabb.p_min, p),
 			Vec::max(aabb.p_max, p));
 	}
 
-	static Bounds3 find_union(const Bounds3& aabb1, const Bounds3& aabb2) {
+	static inline Bounds3 find_union(const Bounds3& aabb1, const Bounds3& aabb2) {
 		return Bounds3(Vec::min(aabb1.p_min, aabb2.p_min), 
 			Vec::max(aabb1.p_max, aabb2.p_max));
 	}
 
-	static Bounds3 find_box_intersect(const Bounds3& aabb1, const Bounds3& aabb2) {
+	static inline Bounds3 find_box_intersect(const Bounds3& aabb1, const Bounds3& aabb2) {
 		return Bounds3(Vec::max(aabb1.p_min, aabb2.p_min),
 			Vec::min(aabb1.p_max, aabb2.p_max));
 	}
-
-	/*
-	bool intersect(const Vec& orig, const Vec& dir, double max_t,
-		const Vec& reverse_dir, const bool is_dir_neg[3]) const {
-		const Bounds3& aabb = *this;
-		
-		double min_t_x = (aabb[is_dir_neg[0]].x - orig.x) * reverse_dir.x;
-		double max_t_x = (aabb[1 - is_dir_neg[0]].x - orig.x) * reverse_dir.x;
-
-		double min_t_y = (aabb[is_dir_neg[1]].y - orig.y) * reverse_dir.y;
-		double max_t_y = (aabb[1 - is_dir_neg[1]].y - orig.y) * reverse_dir.y;
-
-		if (min_t_x > max_t_y || min_t_y > max_t_x)
-			return false;
-		if (min_t_y > min_t_x)
-			min_t_x = min_t_y;
-		if (max_t_y < max_t_x)
-			max_t_x = max_t_y;
-
-		return (max_t_x > 0) && (min_t_x < max_t);
-	}
-	*/
 };
 
 #endif

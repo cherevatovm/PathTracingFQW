@@ -278,8 +278,17 @@ private:
 		}
 
 		Bounds3 get_bounds() const override {
-			return Bounds3::find_union(Bounds3(mesh->vertices[vert0_ind], mesh->vertices[vert1_ind]),
-				mesh->vertices[vert2_ind]);
+			const Vec& v0 = mesh->vertices[vert0_ind];
+			const Vec& v1 = mesh->vertices[vert1_ind];
+			const Vec& v2 = mesh->vertices[vert2_ind];
+
+			Vec p_min = Vec::min(v0, Vec::min(v1, v2));
+			Vec p_max = Vec::max(v0, Vec::max(v1, v2));
+
+			p_min -= Vec(eps, eps, eps);
+			p_max += Vec(eps, eps, eps);
+
+			return Bounds3(p_min, p_max);
 		}
 
 		Vec shape_sample(double u0, double u1) const override {
