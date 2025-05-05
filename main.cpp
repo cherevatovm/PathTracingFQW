@@ -19,6 +19,7 @@
 #include "Vec.h"
 #include "Ray.h"
 #include "Shape.h"
+#include "Microfacets.h"
 #include "BVH_related.h"
 #include "Rand_om.h"
 #include "Utility.h"
@@ -205,6 +206,28 @@ private:
 		// Specular BRDF
 		else if (inters.object->refl == SPEC)
 			return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, r.dir - n * n.dot_prod(r.dir) * 2), depth, Xi)); // Angle of incidence == angle of reflection
+		else if (inters.object->refl == ROUGH) {
+			double roughness = 0.25;
+			double refr_ind = 0.1;
+			double F0 = ((refr_ind - 1) * (refr_ind - 1)) / ((refr_ind + 1) * (refr_ind + 1));
+			Vec wo = -r.dir;
+			Vec m = random_hemisphere_dir(Xi, nl, roughness);
+			Vec wi = m * m.dot_prod(wo) * 2 - wo;
+
+			if (nl.dot_prod(wi) <= 0) return inters.object->emis;
+
+			// BRDF calculation
+			double D = ggx_distribution(nl, m, roughness);
+			double G = geom_smith(nl, wo, wi, roughness);
+			double F = fresnel_schlick(std::max(m.dot_prod(wo), 0.0), F0);
+
+			double brdf = (D * G * F) / (4.0 * abs(nl.dot_prod(wo)) * abs(nl.dot_prod(wi)));
+			brdf *= std::max(nl.dot_prod(wi), 0.0);
+			double pdf = (D * std::max(nl.dot_prod(m), 0.0)) / (4.0 * std::max(m.dot_prod(wo), (double)eps));
+			brdf /= pdf;
+
+			return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, wi), depth, Xi)) * brdf;
+		}
 
 		// Refractive BRDF
 		Ray refl_ray(inters.hit_point, r.dir - n * n.dot_prod(r.dir) * 2);
@@ -220,10 +243,9 @@ private:
 		Vec tdir = (r.dir * refr_ratio - n * ((into ? 1 : -1) * (cos_incid_angle * refr_ratio + sqrt(cos2t)))).norm();
 		double a = refr_ind2 - refr_ind1;
 		double b = refr_ind2 + refr_ind1;
-		double c = 1 - (into ? -cos_incid_angle : tdir.dot_prod(n));
 
 		double F0 = a * a / (b * b);
-		double Fr = F0 + (1 - F0) * pow(c, 5);
+		double Fr = fresnel_schlick((into ? -cos_incid_angle : tdir.dot_prod(n)), F0);
 		double Tr = 1 - Fr;
 
 		double prob = 0.25 + 0.5 * Fr;
@@ -256,7 +278,7 @@ public:
 			new Sphere(1e5, Vec(1e5 + 1, 40.8, 81.6), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
 			new Sphere(1e5, Vec(-1e5 + 99, 40.8, 81.6), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
 			new Sphere(1e5, Vec(50, 40.8, 1e5), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
-			new Sphere(1e5, Vec(50, 40.8, -1e5 + 170), Vec(), Vec(), DIFF), // Front wall
+			new Sphere(1e5, Vec(50, 40.8, -1e5 + 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Front wall
 			new Sphere(1e5, Vec(50, 1e5, 81.6), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
 			new Sphere(1e5, Vec(50, -1e5 + 81.6, 81.6),Vec(),Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
 
@@ -302,12 +324,13 @@ public:
 	void fill() {
 		add_object(new Sphere(16.5, Vec(73, 16.5, 95), Vec(), Vec(1, 1, 1), REFR)); // Glass sphere
 
-		Mesh* m = new Mesh(Vec(0.85, 0.85, 0.85), (Refl_type)brdf_choice);
+		Mesh* m = new Mesh(Vec(1, 1, 1), (Refl_type)brdf_choice);
 		meshes.push_back(m);
 
 		int res = -1;
 		switch (model_choice) {
 		case 0:
+			res = 0;
 			add_object(new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), (Refl_type)brdf_choice));
 			break;
 		case 1:
@@ -352,6 +375,7 @@ public:
 		}
 		if (res != 0)
 			add_object(new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), (Refl_type)brdf_choice));
+
 		/*
 		m->load_model("3D models/triasphere.obj");
 		m->scale(15, 15, 15);
@@ -367,7 +391,7 @@ public:
 		
 		for (auto* f : m->faces)
 			add_object(f);
-
+		
 		for (Sphere* l_s : light_sources)
 			add_object(l_s);
 	}
@@ -520,7 +544,7 @@ void user_interaction() {
 
 	std::cout << "\nDo you want the model to be\n1 - Diffuse\n2 - Specular\n3 - Refractive" << std::endl;
 	std::cin >> brdf_choice;
-	if (brdf_choice >= 1 && brdf_choice <= 3)
+	if (brdf_choice >= 1 && brdf_choice <= 4)
 		--brdf_choice;
 	else {
 		std::cout << "Entered incorrect choice, the model will be diffuse.\n" << std::endl;

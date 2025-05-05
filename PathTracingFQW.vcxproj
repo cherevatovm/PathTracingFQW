@@ -141,6 +141,8 @@
     <ClInclude Include="Bounds.h" />
     <ClInclude Include="ImFileDialog\ImFileDialog.h" />
     <ClInclude Include="Intersection.h" />
+    <ClInclude Include="Material.h" />
+    <ClInclude Include="Microfacets.h" />
     <ClInclude Include="Rand_om.h" />
     <ClInclude Include="Ray.h" />
     <ClInclude Include="Shape.h" />

@@ -13,7 +13,7 @@
 #include "Intersection.h"
 
 using uint = unsigned int;
-enum Refl_type { DIFF, SPEC, REFR };
+enum Refl_type { DIFF, SPEC, REFR, ROUGH };
 
 class Shape {
 public:
