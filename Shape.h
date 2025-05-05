@@ -7,26 +7,27 @@
 #include <list>
 #include "Vec.h"
 #include "Ray.h"
+#include "Material.h"
 #include "Bounds.h"
 #include "Transform.h"
 #include "Utility.h"
 #include "Intersection.h"
 
 using uint = unsigned int;
-enum Refl_type { DIFF, SPEC, REFR, ROUGH };
 
 class Shape {
 public:
-	Vec emis, color;
-	Refl_type refl;
+	Material material;
+	Vec emis;
 	const Transform* render_obj, *obj_render;
 
 	Shape() = default;
 
-	Shape(const Vec& emis_, const Vec& color_, Refl_type refl_,
+	Shape(Material material_, Vec emis_ = Vec(),
 		const Transform* render_obj_ = nullptr, 
 		const Transform* obj_render_ = nullptr) :
-		emis(emis_), color(color_), refl(refl_), render_obj(render_obj_), obj_render(obj_render_) {};
+		material(material_), emis(emis_), 
+		render_obj(render_obj_), obj_render(obj_render_) {};
 
 	virtual Intersection intersect(const Ray& r) const = 0;
 	
@@ -45,16 +46,17 @@ public:
 	Sphere() = default;
 
 	Sphere(double radius_, Vec center_, 
-		Vec emis_, Vec color_, Refl_type refl_,
+		Material material_, Vec emis_ = Vec(),
 		const Transform* render_obj_ = nullptr, 
-		const Transform* obj_render_ = nullptr) : Shape(emis_, color_, refl_, render_obj_, obj_render_),
+		const Transform* obj_render_ = nullptr) : 
+		Shape(material_, emis_, render_obj_, obj_render_),
 		radius(radius_), center(center_) {};
 
 	Sphere& operator=(const Sphere& sph) {
 		center = sph.center;
 		radius = sph.radius;
-		emis = sph.emis; color = sph.color;
-		refl = sph.refl;
+		material = sph.material;
+		emis = sph.emis;
 		render_obj = sph.render_obj;
 		obj_render = sph.obj_render;
 		return *this;
@@ -100,10 +102,10 @@ public:
 	Triangle() = default;
 
 	Triangle(Vec vert1_, Vec vert2_, Vec vert3_,
-		Vec emis_, Vec color_, Refl_type refl_,
+		Material material_, Vec emis_ = Vec(),
 		const Transform* render_obj_ = nullptr,
 		const Transform* obj_render_ = nullptr) : 
-		Shape(emis_, color_, refl_, render_obj_, obj_render_),
+		Shape(material_, emis_, render_obj_, obj_render_),
 		vert1(vert1_), vert2(vert2_), vert3(vert3_),
 		normal(((vert2_ - vert1_) % (vert3_ - vert1_)).norm()) {
 	}
@@ -113,8 +115,8 @@ public:
 		vert2 = t.vert2;
 		vert3 = t.vert3;
 		normal = t.normal;
-		emis = t.emis; color = t.color;
-		refl = t.refl;
+		material = t.material;
+		emis = t.emis;
 		render_obj = t.render_obj;
 		obj_render = t.obj_render;
 		return *this;
@@ -177,19 +179,19 @@ private:
 
 		MeshTriangle() = default;
 
-		MeshTriangle(const Mesh* mesh_, Vec color_, Refl_type refl_, 
+		MeshTriangle(const Mesh* mesh_, Material material_,
 			const Transform* render_obj_ = nullptr, 
 			const Transform* obj_render_ = nullptr) : 
-			Shape(Vec(), color_, refl_, render_obj_, obj_render_), mesh(mesh_) {}
+			Shape(material_, Vec(), render_obj_, obj_render_), mesh(mesh_) {}
 
 		MeshTriangle(const Mesh* mesh_,
 			uint v1_ind_, uint v2_ind_, uint v3_ind_,
-			Vec emis_, Vec color_, Refl_type refl_,
+			Material material_, Vec emis_ = Vec(),
 			uint v1_n_ind_ = UINT_MAX, uint v2_n_ind_ = UINT_MAX, uint v3_n_ind_ = UINT_MAX,
 			const Transform* render_obj_ = nullptr, const Transform* obj_render_ = nullptr) :
-			Shape(emis_, color_, refl_, render_obj_, obj_render_), mesh(mesh_),
+			Shape(material_, emis_, render_obj_, obj_render_), mesh(mesh_),
 			vert0_ind(v1_ind_), vert1_ind(v2_ind_), vert2_ind(v3_ind_),
-			vert0_norm_ind(v1_n_ind_), vert1_norm_ind(v2_n_ind_), vert2_norm_ind(v3_n_ind_)
+			vert0_norm_ind(v1_n_ind_), vert1_norm_ind(v2_n_ind_), vert2_norm_ind(v3_n_ind_) 
 		{
 			surface_normal = ((mesh->vertices[vert1_ind] - mesh->vertices[vert0_ind]) %
 				(mesh->vertices[vert2_ind] - mesh->vertices[vert0_ind])).norm();
@@ -203,8 +205,8 @@ private:
 			vert0_norm_ind = t.vert0_norm_ind;
 			vert1_norm_ind = t.vert1_norm_ind;
 			vert2_norm_ind = t.vert2_norm_ind;
-			emis = t.emis; color = t.color;
-			refl = t.refl;
+			material = t.material;
+			emis = t.emis;
 			render_obj = t.render_obj;
 			obj_render = t.obj_render;
 			return *this;
@@ -403,23 +405,22 @@ public:
 	std::vector<MeshTriangle*> faces;
 	std::vector<Vec> vertices;
 	std::vector<Vec> vert_normals;
-	Vec color;
-	Refl_type refl;
+	Material material;
 
-	Mesh(Vec color_, Refl_type refl_) : color(color_), refl(refl_) {};
+	Mesh(Material material_) : material(material_) {};
 
-	Mesh(const std::vector<Vec>& vertices_, const std::vector<Vec>& vert_normals_, 
-		const std::vector<uint>& indices_, Vec color_, Refl_type refl_) :
-		vertices(vertices_), vert_normals(vert_normals_), color(color_), refl(refl_) {
+	Mesh(const std::vector<Vec>& vertices_, const std::vector<Vec>& vert_normals_,
+		const std::vector<uint>& indices_, Material material_) :
+		vertices(vertices_), vert_normals(vert_normals_), material(material_) {
 		bool has_normals = vert_normals_.size() > 0;
 		uint inc = has_normals ? 6 : 3;
 		for (int i = 0; i < indices_.size(); i += inc) {
 			if (has_normals) {
 				faces.push_back(new MeshTriangle(this, indices_[i], indices_[i + 2], indices_[i + 4],
-					Vec(), color_, refl_, indices_[i + 1], indices_[i + 3], indices_[i + 5]));
+					material_, Vec(), indices_[i + 1], indices_[i + 3], indices_[i + 5]));
 			}
 			else
-				faces.push_back(new MeshTriangle(this, indices_[i], indices_[i + 1], indices_[i + 2], Vec(), color_, refl_));
+				faces.push_back(new MeshTriangle(this, indices_[i], indices_[i + 1], indices_[i + 2], material_, Vec()));
 		}
 		if (!has_normals)
 			calc_vertex_normals();
@@ -471,7 +472,7 @@ public:
 			else if (type == "f") {
 				auto spl = split(line);
 				for (int i = 3; i < spl.size(); ++i) {
-					MeshTriangle* cur_triangle = new MeshTriangle(this, color, refl);
+					MeshTriangle* cur_triangle = new MeshTriangle(this, material);
 					faces.push_back(cur_triangle);
 					process_face(cur_triangle, std::vector<std::string>{ spl[1], spl[i - 1], spl[i] });
 				}
@@ -484,7 +485,7 @@ public:
 	}
 
 	static Mesh* create_hexahedron(Vec center_, double radius_, 
-		double alpha_, Vec color_, Refl_type refl_) {
+		double alpha_, Material material_) {
 		Vec p1{ center_.x + radius_, center_.y + radius_, center_.z + radius_ };
 		Vec p7{ center_.x - radius_, center_.y - radius_, center_.z - radius_ };
 		Vec p2{ p1.x, p1.y, p7.z };
@@ -508,7 +509,7 @@ public:
 			std::vector<uint>{ 0, 1, 2, 2, 3, 0,
 			7, 6, 5, 5, 4, 7, 1, 5, 6, 6, 2,
 			1, 0, 4, 5, 5, 1, 0, 7, 6, 2,
-			2, 3, 7, 0, 3, 7, 7, 4, 0 }, color_, refl_);
+			2, 3, 7, 0, 3, 7, 7, 4, 0 }, material_);
 	}
 };
 

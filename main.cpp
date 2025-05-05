@@ -19,6 +19,7 @@
 #include "Vec.h"
 #include "Ray.h"
 #include "Shape.h"
+#include "Material.h"
 #include "Microfacets.h"
 #include "BVH_related.h"
 #include "Rand_om.h"
@@ -34,7 +35,7 @@ static void glfw_error_callback(int error, const char* description) {
 int width = 1024, height = 768, samples;
 Vec* image;
 std::string ui_text = "";
-int model_choice = 0, brdf_choice = 0;
+int model_choice = 0, material_choice = 0;
 
 class Scene {
 private:
@@ -121,12 +122,12 @@ private:
 			std::nth_element(begin, median, end, CentroidComparator(cur_node->split_axis));
 
 			// Recursively call for left and right child
-			size_t firstChildIndex = bv_hierarchy.size();
+			size_t first_child_ind = bv_hierarchy.size();
 			split_bounds(begin, median, max_leaf_obj_num);
 			cur_node->second_child_ind = bv_hierarchy.size();
 			split_bounds(median, end, max_leaf_obj_num);
 			
-			cur_node->aabb = Bounds3::find_union(bv_hierarchy[firstChildIndex].aabb, bv_hierarchy[cur_node->second_child_ind].aabb);
+			cur_node->aabb = Bounds3::find_union(bv_hierarchy[first_child_ind].aabb, bv_hierarchy[cur_node->second_child_ind].aabb);
 		}
 	}
 
@@ -137,8 +138,8 @@ private:
 
 		inters.calc_inters_point(r);
 		Vec n = inters.object->get_normal(inters);
-		Vec nl = n.dot_prod(r.dir) < 0 ? n : n * -1;
-		Vec color = inters.object->color;
+		Vec nl = n.dot_prod(r.dir) < 0 ? n : -n;
+		Vec color = inters.object->material.color;
 		double rr_prob = std::max(color.x, std::max(color.y, color.z));
 
 		// Russian Roulette for path termination
@@ -150,7 +151,7 @@ private:
 		}
 
 		// Diffuse BRDF
-		if (inters.object->refl == DIFF) {
+		if (inters.object->material.brdf == DIFF) {
 			double r1 = 2 * M_PI * erand48(Xi);
 			double r2 = erand48(Xi);
 			double r2s = sqrt(r2);
@@ -204,16 +205,17 @@ private:
 			return inters.object->emis * E + e + color.mult(path_tracing(Ray(inters.hit_point, d), depth, Xi, 0));
 		}
 		// Specular BRDF
-		else if (inters.object->refl == SPEC)
+		else if (inters.object->material.brdf == SPEC)
 			return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, r.dir - n * n.dot_prod(r.dir) * 2), depth, Xi)); // Angle of incidence == angle of reflection
-		else if (inters.object->refl == ROUGH) {
-			double roughness = 0.25;
-			double refr_ind = 0.1;
+		else if (inters.object->material.brdf == ROUGH) {
+			double roughness = inters.object->material.roughness;
+			double refr_ind = inters.object->material.refr_ind;
 			double F0 = ((refr_ind - 1) * (refr_ind - 1)) / ((refr_ind + 1) * (refr_ind + 1));
+			
 			Vec wo = -r.dir;
 			Vec m = random_hemisphere_dir(Xi, nl, roughness);
 			Vec wi = m * m.dot_prod(wo) * 2 - wo;
-
+			
 			if (nl.dot_prod(wi) <= 0) return inters.object->emis;
 
 			// BRDF calculation
@@ -232,7 +234,7 @@ private:
 		// Refractive BRDF
 		Ray refl_ray(inters.hit_point, r.dir - n * n.dot_prod(r.dir) * 2);
 		bool into = n.dot_prod(nl) > 0; // Check if a ray goes in or out 
-		double refr_ind1 = 1, refr_ind2 = 1.5;
+		double refr_ind1 = 1, refr_ind2 = inters.object->material.refr_ind;
 		double refr_ratio = into ? refr_ind1 / refr_ind2 : refr_ind2 / refr_ind1;
 		double cos_incid_angle = r.dir.dot_prod(nl);
 		double cos2t = 1 - refr_ratio * refr_ratio * (1 - cos_incid_angle * cos_incid_angle);
@@ -268,19 +270,19 @@ private:
 public:
 	Scene() {
 		light_sources = {
-			new Sphere(5.5, Vec(50, 81.6 - 15.5, 90), Vec(1, 1, 1) * 40, Vec(), DIFF),
+			new Sphere(5.5, Vec(50, 81.6 - 15.5, 90), Material(Vec(), DIFF), Vec(1, 1, 1) * 40),
 			//new Sphere(2.75, Vec(70, 81.6 - 30.5, 81.6), Vec(0, 1, 1) * 20,  Vec(), DIFF),
 			//new Sphere(1.375, Vec(20, 81.6 - 20, 81.6), Vec(1, 1, 0) * 40,  Vec(), DIFF)
 		};
 		
-		// radius, position, emission, color, material
+		// radius, position, material
 		unbounded_objects = {
-			new Sphere(1e5, Vec(1e5 + 1, 40.8, 81.6), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
-			new Sphere(1e5, Vec(-1e5 + 99, 40.8, 81.6), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
-			new Sphere(1e5, Vec(50, 40.8, 1e5), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
-			new Sphere(1e5, Vec(50, 40.8, -1e5 + 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Front wall
-			new Sphere(1e5, Vec(50, 1e5, 81.6), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
-			new Sphere(1e5, Vec(50, -1e5 + 81.6, 81.6),Vec(),Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
+			new Sphere(1e5, Vec(1e5 + 1, 40.8, 81.6), Material(Vec(0.75, 0.25, 0.25), DIFF)), // Left wall
+			new Sphere(1e5, Vec(-1e5 + 99, 40.8, 81.6), Material(Vec(0.25, 0.25, 0.75), DIFF)), // Right wall
+			new Sphere(1e5, Vec(50, 40.8, 1e5), Material(Vec(0.25, 0.75, 0.25), DIFF)), // Back wall
+			new Sphere(1e5, Vec(50, 40.8, -1e5 + 170), Material(Vec(0.75, 0.75, 0.75), DIFF)), // Front wall
+			new Sphere(1e5, Vec(50, 1e5, 81.6), Material(Vec(0.75, 0.75, 0.75), DIFF)), // Floor
+			new Sphere(1e5, Vec(50, -1e5 + 81.6, 81.6), Material(Vec(0.75, 0.75, 0.75), DIFF)), // Ceiling
 
 			/*
 			new Triangle(Vec(0, 0, 170), Vec(0, 82.5, 170), Vec(), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
@@ -322,16 +324,16 @@ public:
 	}
 
 	void fill() {
-		add_object(new Sphere(16.5, Vec(73, 16.5, 95), Vec(), Vec(1, 1, 1), REFR)); // Glass sphere
+		add_object(new Sphere(16.5, Vec(73, 16.5, 95), glass)); // Glass sphere
 
-		Mesh* m = new Mesh(Vec(1, 1, 1), (Refl_type)brdf_choice);
+		Mesh* m = new Mesh(materials[material_choice]);
 		meshes.push_back(m);
 
 		int res = -1;
 		switch (model_choice) {
 		case 0:
 			res = 0;
-			add_object(new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), (Refl_type)brdf_choice));
+			add_object(new Sphere(20.5, Vec(33, 20.5, 65), materials[material_choice]));
 			break;
 		case 1:
 			res = m->load_model("3D models/cube.obj");
@@ -374,7 +376,7 @@ public:
 			break;
 		}
 		if (res != 0)
-			add_object(new Sphere(20.5, Vec(33, 20.5, 65), Vec(), Vec(1, 1, 1), (Refl_type)brdf_choice));
+			add_object(new Sphere(20.5, Vec(33, 20.5, 65), materials[material_choice]));
 
 		/*
 		m->load_model("3D models/triasphere.obj");
@@ -542,13 +544,13 @@ void user_interaction() {
 		model_choice = 0;
 	}
 
-	std::cout << "\nDo you want the model to be\n1 - Diffuse\n2 - Specular\n3 - Refractive" << std::endl;
-	std::cin >> brdf_choice;
-	if (brdf_choice >= 1 && brdf_choice <= 4)
-		--brdf_choice;
+	std::cout << "\nChoose a material:\n1 - Diffuse plastic\n2 - Mirror\n3 - Glass\n4 - Metal" << std::endl;
+	std::cin >> material_choice;
+	if (material_choice >= 1 && material_choice <= 4)
+		--material_choice;
 	else {
 		std::cout << "Entered incorrect choice, the model will be diffuse.\n" << std::endl;
-		brdf_choice = 0;
+		material_choice = 0;
 	}
 	std::cout << std::endl;
 }
