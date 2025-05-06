@@ -230,7 +230,62 @@ private:
 
 			return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, wi), depth, Xi)) * brdf;
 		}
+		else if (inters.object->material.brdf == ROUGH_DIEL) {
+			double roughness = inters.object->material.roughness;
+			double refr_ind1 = 1, refr_ind2 = inters.object->material.refr_ind;
+			double F0 = ((refr_ind2 - refr_ind1) * (refr_ind2 - refr_ind1)) / 
+				((refr_ind2 + refr_ind1) * (refr_ind2 + refr_ind1));
+			
+			Vec wo = -r.dir;
+			Vec m = random_hemisphere_dir(Xi, nl, roughness);
+			Vec wi_refl = m * m.dot_prod(wo) * 2 - wo;
+			
+			double Fr = fresnel_schlick(std::max(wo.dot_prod(m), 0.0), F0);
+			double Tr = 1 - Fr;
 
+			double prob = 0.25 + 0.5 * Fr;
+			double refl_prob = Fr / prob, trans_prob = Tr / (1 - prob);
+
+			if (erand48(Xi) < prob) {
+				if (nl.dot_prod(wi_refl) <= 0) return inters.object->emis;
+
+				// BRDF calculation
+				double D = ggx_distribution(nl, m, roughness);
+				double G = geom_smith(nl, wo, wi_refl, roughness);
+
+				double brdf = (D * G * Fr) / (4.0 * abs(nl.dot_prod(wo)) * abs(nl.dot_prod(wi_refl)));
+				brdf *= std::max(nl.dot_prod(wi_refl), 0.0);
+				double pdf = (D * std::max(nl.dot_prod(m), 0.0)) / (4.0 * std::max(m.dot_prod(wo), (double)eps));
+				brdf /= pdf;
+
+				return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, wi_refl), depth, Xi)) * refl_prob * brdf;
+			}
+			else {
+				bool into = m.dot_prod(n) > 0;
+				double refr_ratio = into ? refr_ind1 / refr_ind2 : refr_ind2 / refr_ind1;
+				double cos_incid_angle = r.dir.dot_prod(m);
+				double cos2t = 1 - refr_ratio * refr_ratio * (1 - cos_incid_angle * cos_incid_angle);
+
+				if (cos2t < 0)
+					//return inters.object->emis;
+					return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, wi_refl), depth, Xi));
+
+				Vec wi_refr = (r.dir * refr_ratio - m * ((into ? 1 : -1) * 
+					(cos_incid_angle * refr_ratio + sqrt(cos2t)))).norm();
+				
+				/*
+				double D = ggx_distribution(nl, m, roughness);
+				double G = geom_smith(nl, wo, wi_refr, roughness);
+				double denom = pow(wo.dot_prod(m) + refr_ratio * wi_refr.dot_prod(m), 2);
+				double btdf = (D * G * (1 - Fr)) / (4.0 * abs(nl.dot_prod(wo)) * abs(nl.dot_prod(wi_refl)));
+				btdf *= (std::abs(wi_refr.dot_prod(m)) * wo.dot_prod(m)) / denom;
+				double pdf = (D * std::max(nl.dot_prod(m), 0.0)) / (4.0 * std::max(m.dot_prod(wo), (double)eps));
+				btdf /= pdf;
+				*/
+				return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, wi_refr), depth, Xi)) * trans_prob;
+			}
+		}
+		
 		// Refractive BRDF
 		Ray refl_ray(inters.hit_point, r.dir - n * n.dot_prod(r.dir) * 2);
 		bool into = n.dot_prod(nl) > 0; // Check if a ray goes in or out 

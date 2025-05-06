@@ -2,7 +2,7 @@
 #define MATERIAL_H
 #include "Vec.h"
 
-enum Refl_type { DIFF, SPEC, REFR, ROUGH };
+enum Refl_type { DIFF, SPEC, REFR, ROUGH, ROUGH_DIEL };
 
 struct Material {
 	Refl_type brdf;
@@ -30,10 +30,10 @@ Material glass = {
 	1.5
 };
 Material metal = {
-	Vec(0.75, 0.75, 1),
-	ROUGH,
-	0.1,
-	0.25
+	Vec(1, 1, 1),
+	ROUGH_DIEL,
+	1.85,
+	0.1
 };
 
 std::vector<Material> materials = { plastic, mirror, glass, metal };
