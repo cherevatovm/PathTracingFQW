@@ -374,6 +374,30 @@ public:
 				m->translate(Vec(35, 25, 60));
 			}
 			break;
+		case 6:
+			res = m->load_model("3D models/gear.obj");
+			if (res == 0) {
+				m->scale(4, 4, 4);
+				m->rotate(30, 1);
+				m->translate(Vec(32, 18, 85));
+			}
+			break;
+		case 7:
+			res = m->load_model("3D models/GLman02.obj");
+			if (res == 0) {
+				m->scale(0.4, 0.4, 0.4);
+				m->rotate(30, 1);
+				m->translate(Vec(28, -62, 85));
+			}
+			break;
+		case 8:
+			res = m->load_model("3D models/weird_sphere.obj");
+			if (res == 0) {
+				m->scale(25, 25, 25);
+				m->rotate(-45, 1);
+				m->translate(Vec(32, 30, 85));
+			}
+			break;
 		}
 		if (res != 0)
 			add_object(new Sphere(20.5, Vec(33, 20.5, 65), materials[material_choice]));
@@ -535,9 +559,9 @@ void user_interaction() {
 	std::cout << "       |                 |/" << std::endl;
 	std::cout << "       +-----------------+\n" << std::endl;
 
-	std::cout << "Choose a model to load:\n1 - Sphere\n2 - Cube\n3 - Pinetree\n4 - Dog\n5 - Skull\n6 - Heart" << std::endl;
+	std::cout << "Choose a model to load:\n1 - Sphere\n2 - Cube\n3 - Pinetree\n4 - Dog\n5 - Skull\n6 - Heart\n7 - Gear\n8 - Person statue\n9 - Techno-sphere" << std::endl;
 	std::cin >> model_choice;
-	if (model_choice >= 1 && model_choice <= 6)
+	if (model_choice >= 1 && model_choice <= 9)
 		--model_choice;
 	else {
 		std::cout << "Entered incorrect model ID, a sphere will be used." << std::endl;

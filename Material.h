@@ -10,13 +10,16 @@ struct Material {
 	double refr_ind;
 	double roughness;
 
-	Material(const Vec& color_ = Vec(1, 1, 1), Refl_type brdf_ = DIFF,
+	Material(const Vec& color_ = Vec(0.7, 0.7, 0.7), Refl_type brdf_ = DIFF,
 		double refr_ind_ = 1, double roughness_ = 0) : 
 		brdf(brdf_), color(color_), 
 		refr_ind(refr_ind_), roughness(roughness_) {}
 };
 
-Material plastic;
+Material plastic = {
+	Vec(0.7, 0.7, 0.7),
+	DIFF
+};
 Material mirror = {
 	Vec(0.85, 0.85, 0.85),
 	SPEC
