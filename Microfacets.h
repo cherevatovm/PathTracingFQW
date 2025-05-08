@@ -66,4 +66,30 @@ double geom_smith(const Vec& n, const Vec& v, const Vec& l, double roughness) {
     return ggx1 * ggx2;
 }
 
+double brdf_div_by_pdf(const Vec& n, const Vec& wo, const Vec& wi, 
+    const Vec& wm, double roughness, double Fr) {
+    double D = ggx_distribution(n, wm, roughness);
+    double G = geom_smith(n, wo, wi, roughness);
+
+    double brdf = (D * G * Fr) / (4.0 * abs(n.dot_prod(wo)) * abs(n.dot_prod(wi)));
+    brdf *= std::max(n.dot_prod(wi), 0.0);
+    double pdf = (D * std::max(n.dot_prod(wm), 0.0)) / (4.0 * std::max(wm.dot_prod(wo), 1e-6));
+    brdf /= pdf;
+
+    return brdf;
+}
+
+double btdf_div_by_pdf(const Vec& n, const Vec& wo, const Vec& wi,
+    const Vec& wm, double roughness, double Tr, double refr_ratio) {
+    double D = ggx_distribution(n, wm, roughness);
+    double G = geom_smith(n, wo, wi, roughness);
+    double denom = pow(wo.dot_prod(wm) + refr_ratio * wi.dot_prod(wm), 2);
+    double btdf = (D * G * Tr) / (4.0 * abs(n.dot_prod(wo)) * abs(n.dot_prod(wi)));
+    btdf *= (std::abs(wi.dot_prod(wm)) * wo.dot_prod(wm)) / denom;
+    double pdf = (D * std::max(n.dot_prod(wm), 0.0)) / (4.0 * std::max(wm.dot_prod(wo), 1e-6));
+    btdf /= pdf;
+
+    return btdf;
+}
+
 #endif
