@@ -118,4 +118,12 @@ Vec sample_hemisphere(double u1, double u2) {
 	return Vec(cos(phi) * r, sin(phi) * r, u1);
 }
 
+inline double cos_theta(const Vec& w) { return w.z; }
+inline double abs_cos_theta(const Vec& w) { return std::abs(w.z); }
+inline double cos_2_theta(const Vec& w) { return w.z * w.z; }
+inline double sin_2_theta(const Vec& w) { return std::max(1 - cos_2_theta(w), 0.0); }
+inline double sin_theta(const Vec& w) { return std::sqrt(sin_2_theta(w)); }
+inline double tan_theta(const Vec& w) { return sin_theta(w) / cos_theta(w); }
+inline double tan_2_theta(const Vec& w) { return sin_2_theta(w) / cos_2_theta(w); }
+
 #endif

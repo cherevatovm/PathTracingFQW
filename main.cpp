@@ -240,14 +240,14 @@ private:
 			double refr_ratio = into ? refr_ind1 / refr_ind2 : refr_ind2 / refr_ind1;
 			double cos_incid_angle = r.dir.dot_prod(wm);
 			double cos2t = 1 - refr_ratio * refr_ratio * (1 - cos_incid_angle * cos_incid_angle);
+			double Fr = fresnel_schlick(std::max(wo.dot_prod(wm), 0.0), F0);
 
 			if (cos2t < 0)
 				return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, wi_refl), depth, Xi));
 			
 			Vec wi_refr = (r.dir * refr_ratio - wm * ((into ? 1 : -1) *
 				(cos_incid_angle * refr_ratio + sqrt(cos2t)))).norm();
-			
-			double Fr = fresnel_schlick(std::max(wo.dot_prod(wm), 0.0), F0);
+
 			double Tr = 1 - Fr;
 			double prob = 0.25 + 0.5 * Fr;
 			double refl_prob = Fr / prob, trans_prob = Tr / (1 - prob);
@@ -259,12 +259,14 @@ private:
 						brdf_div_by_pdf(nl, wo, wi_refl, wm, roughness, Fr);
 				}
 				else {
-					return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, wi_refr), depth, Xi)) * trans_prob;
-						//btdf_div_by_pdf(nl, wo, wi_refr, wm, roughness, Tr, refr_ratio);
+					return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, wi_refr), depth, Xi)) * trans_prob *
+						btdf_div_by_pdf(nl, wo, wi_refr, wm, roughness, Tr, refr_ratio);
 				}
 			}
-			else
-				return path_tracing(Ray(inters.hit_point, wi_refl), depth, Xi) * Fr + path_tracing(Ray(inters.hit_point, wi_refr), depth, Xi) * Tr;
+			else {
+				return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, wi_refl), depth, Xi) * brdf_div_by_pdf(nl, wo, wi_refl, wm, roughness, Fr) +
+					path_tracing(Ray(inters.hit_point, wi_refr), depth, Xi) * btdf_div_by_pdf(nl, wo, wi_refr, wm, roughness, Tr, refr_ratio));
+			}
 		}
 		
 		// Refractive BRDF
@@ -604,9 +606,9 @@ void user_interaction() {
 		model_choice = 0;
 	}
 
-	std::cout << "\nChoose a material:\n1 - Diffuse plastic\n2 - Mirror\n3 - Glass\n4 - Metal" << std::endl;
+	std::cout << "\nChoose a material:\n1 - Diffuse plastic\n2 - Mirror\n3 - Glass\n4 - Frosted glass\n5 - Metal" << std::endl;
 	std::cin >> material_choice;
-	if (material_choice >= 1 && material_choice <= 4)
+	if (material_choice >= 1 && material_choice <= 5)
 		--material_choice;
 	else {
 		std::cout << "Entered incorrect choice, the model will be diffuse.\n" << std::endl;

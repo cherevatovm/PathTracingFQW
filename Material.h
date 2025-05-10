@@ -11,7 +11,7 @@ struct Material {
 	double roughness;
 
 	Material(const Vec& color_ = Vec(0.7, 0.7, 0.7), Refl_type brdf_ = DIFF,
-		double refr_ind_ = 1, double roughness_ = 0) : 
+		double refr_ind_ = 1 + 1e-4, double roughness_ = 1e-4) : 
 		brdf(brdf_), color(color_), 
 		refr_ind(refr_ind_), roughness(roughness_) {}
 };
@@ -29,13 +29,19 @@ Material glass = {
 	REFR,
 	1.5
 };
-Material metal = {
+Material frosted_glass = {
 	Vec(1, 1, 1),
 	ROUGH_DIEL,
-	1.85,
-	0.1
+	1.75,
+	0.5
+};
+Material metal = {
+	Vec(0.75, 0.75, 1),
+	ROUGH,
+	3.5,
+	0.25
 };
 
-std::vector<Material> materials = { plastic, mirror, glass, metal };
+std::vector<Material> materials = { plastic, mirror, glass, frosted_glass, metal };
 
 #endif
