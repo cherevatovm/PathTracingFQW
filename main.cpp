@@ -35,7 +35,9 @@ static void glfw_error_callback(int error, const char* description) {
 int width = 1024, height = 768, samples;
 Vec* image;
 std::string ui_text = "";
-int model_choice = 0, material_choice = 0;
+std::vector<uint> model_choices = { 0, 0 };
+std::vector<uint> material_choices = { 0, 0 };
+std::vector<double> roughness_choices = { 0.0, 0.0 };
 
 class Scene {
 private:
@@ -157,13 +159,12 @@ private:
 
 		// Diffuse BRDF
 		if (inters.object->material.brdf == DIFF) {
-			double r1 = 2 * M_PI * erand48(Xi);
-			double r2 = erand48(Xi);
-			double r2s = sqrt(r2);
+			double r1 = 2 * M_PI * erand48(Xi), r2 = erand48(Xi);
+			double r2_sqrt = sqrt(r2);
 
 			Vec w = nl, u, v;
 			create_orthonorm_sys(w, u, v);
-			Vec d = (u * cos(r1) * r2s + v * sin(r1) * r2s + w * sqrt(1 - r2)).norm();
+			Vec d = (u * cos(r1) * r2_sqrt + v * sin(r1) * r2_sqrt + w * sqrt(1 - r2)).norm();
 
 			// For hemisphere sampling
 			/*
@@ -217,13 +218,13 @@ private:
 			double refr_ind = inters.object->material.refr_ind;
 			
 			Vec wo = -r.dir;
-			Vec wm = random_hemisphere_dir(Xi, nl, roughness);
+			Vec wm = sample_wm(Xi, nl, roughness);
 			Vec wi = wm * wm.dot_prod(wo) * 2 - wo;	
 			if (nl.dot_prod(wi) <= 0) return inters.object->emis;
 			
 			double Fr = fresnel_schlick(std::max(wm.dot_prod(wo), 0.0),
 				((refr_ind - 1) * (refr_ind - 1)) / ((refr_ind + 1) * (refr_ind + 1)));		
-			return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, wi), depth, Xi)) 
+			return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, wi), depth, Xi))
 				* brdf_div_by_pdf(nl, wo, wi, wm, roughness, Fr);
 		}
 		else if (inters.object->material.brdf == ROUGH_DIEL) {
@@ -233,7 +234,7 @@ private:
 				((refr_ind2 + refr_ind1) * (refr_ind2 + refr_ind1));
 
 			Vec wo = -r.dir;
-			Vec wm = random_hemisphere_dir(Xi, nl, roughness);
+			Vec wm = sample_wm(Xi, nl, roughness);
 			Vec wi_refl = wm * wm.dot_prod(wo) * 2 - wo;
 			
 			bool into = wm.dot_prod(n) > 0;
@@ -260,12 +261,12 @@ private:
 				}
 				else {
 					return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, wi_refr), depth, Xi)) * trans_prob *
-						btdf_div_by_pdf(nl, wo, wi_refr, wm, roughness, Tr, refr_ratio);
+						btdf_div_by_pdf(wo, wi_refr, wm, roughness, Tr, refr_ratio);
 				}
 			}
 			else {
 				return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, wi_refl), depth, Xi) * brdf_div_by_pdf(nl, wo, wi_refl, wm, roughness, Fr) +
-					path_tracing(Ray(inters.hit_point, wi_refr), depth, Xi) * btdf_div_by_pdf(nl, wo, wi_refr, wm, roughness, Tr, refr_ratio));
+					path_tracing(Ray(inters.hit_point, wi_refr), depth, Xi) * btdf_div_by_pdf(wo, wi_refr, wm, roughness, Tr, refr_ratio));
 			}
 		}
 		
@@ -280,12 +281,12 @@ private:
 		if (cos2t < 0)
 			return inters.object->emis + color.mult(path_tracing(refl_ray, depth, Xi)); // Total internal reflection 
 
-		Vec tdir = (r.dir * refr_ratio - n * ((into ? 1 : -1) * (cos_incid_angle * refr_ratio + sqrt(cos2t)))).norm();
+		Vec t_dir = (r.dir * refr_ratio - n * ((into ? 1 : -1) * (cos_incid_angle * refr_ratio + sqrt(cos2t)))).norm();
 		double a = refr_ind2 - refr_ind1;
 		double b = refr_ind2 + refr_ind1;
 
 		double F0 = a * a / (b * b);
-		double Fr = fresnel_schlick((into ? -cos_incid_angle : tdir.dot_prod(n)), F0);
+		double Fr = fresnel_schlick((into ? -cos_incid_angle : t_dir.dot_prod(n)), F0);
 		double Tr = 1 - Fr;
 
 		double prob = 0.25 + 0.5 * Fr;
@@ -297,10 +298,10 @@ private:
 			if (erand48(Xi) < prob)
 				result = path_tracing(refl_ray, depth, Xi) * refl_prob;
 			else
-				result = path_tracing(Ray(inters.hit_point, tdir), depth, Xi) * trans_prob;
+				result = path_tracing(Ray(inters.hit_point, t_dir), depth, Xi) * trans_prob;
 		}
 		else
-			result = path_tracing(refl_ray, depth, Xi) * Fr + path_tracing(Ray(inters.hit_point, tdir), depth, Xi) * Tr;
+			result = path_tracing(refl_ray, depth, Xi) * Fr + path_tracing(Ray(inters.hit_point, t_dir), depth, Xi) * Tr;
 
 		return inters.object->emis + color.mult(result);
 	}
@@ -362,99 +363,147 @@ public:
 	}
 
 	void fill() {
-		add_object(new Sphere(16.5, Vec(73, 16.5, 95), glass)); // Glass sphere
+		for (int i = 0; i < material_choices.size(); ++i) {
+			Mesh* m = new Mesh(materials[material_choices[i]]);
+			m->material.roughness = roughness_choices[i];
+			meshes.push_back(m);
 
-		Mesh* m = new Mesh(materials[material_choice]);
-		meshes.push_back(m);
+			int res = -1;
+			switch (model_choices[i]) {
+			case -1:
+				res = 0;
+				break;
+			case 0: {
+				res = 0;
+				Sphere* sph = new Sphere(16.5, Vec(33, 16.5, 65), materials[material_choices[i]]);
+				sph->material.roughness = roughness_choices[i];
+				if (i != 0)
+					sph->center = Vec(73, 16.5, 95);
+				add_object(sph);
+				break;
+			}
+			case 1:
+				res = m->load_model("3D models/cube.obj");
+				if (res == 0) {
+					m->scale(15, 15, 15);
+					if (i == 0) {
+						m->rotate(30, 1);
+						m->translate(Vec(30, 15, 80));
+					}
+					else {
+						m->rotate(-30, 1);
+						m->translate(Vec(75, 15, 90));
+					}
+				}
+				break;
+			case 2:
+				res = m->load_model("3D models/pinetree.obj");
+				if (res == 0) {
+					m->scale(0.2, 0.2, 0.2, false);
+					if (i == 0)
+						m->translate(Vec(100, 20, 80));
+					else {
+						m->rotate(30, 1);
+						m->translate(Vec(142, 20, 95));
+					}
+				}
+				break;
+			case 3:
+				res = m->load_model("3D models/dog.obj");
+				if (res == 0) {
+					if (i == 0) {
+						m->rotate(20, 1);
+						m->translate(Vec(30, 0, 60));
+					}
+					else {
+						m->rotate(-20, 1);
+						m->translate(Vec(70, 0, 70));
+					}
+				}
+				break;
+			case 4:
+				res = m->load_model("3D models/skull.obj");
+				if (res == 0) {
+					m->scale(5, 5, 5);
+					if (i == 0) {
+						m->rotate(30, 1);
+						m->translate(Vec(30, 25, 80));
+					}
+					else {
+						m->rotate(-15, 1);
+						m->translate(Vec(65, 25, 100));
+					}
+				}
+				break;
+			case 5:
+				res = m->load_model("3D models/heart.obj");
+				if (res == 0) {
+					m->scale(2, 2, 2);
+					m->rotate(-90, 0);
+					if (i == 0) {
+						m->rotate(15, 1);
+						m->translate(Vec(35, 25, 60));
+					}
+					else {
+						m->rotate(-25, 1);
+						m->translate(Vec(72, 23, 85));
+					}
+				}
+				break;
+			case 6:
+				res = m->load_model("3D models/gear.obj");
+				if (res == 0) {
+					m->scale(4, 4, 4);
+					if (i == 0) {
+						m->rotate(30, 1);
+						m->translate(Vec(32, 18, 75));
+					}
+					else {
+						m->rotate(-35, 1);
+						m->translate(Vec(72, 18, 100));
+					}
+				}
+				break;
+			case 7:
+				res = m->load_model("3D models/GLman02.obj");
+				if (res == 0) {
+					m->scale(0.4, 0.4, 0.4);
+					if (i == 0) {
+						m->rotate(30, 1);
+						m->translate(Vec(28, -62, 85));
+					}
+					else {
+						m->rotate(-45, 1);
+						m->translate(Vec(75, -62, 95));
+					}
+				}
+				break;
+			case 8:
+				res = m->load_model("3D models/weird_sphere.obj");
+				if (res == 0) {				
+					m->scale(25, 25, 25);
+					if (i == 0) {
+						m->rotate(-45, 1);
+						m->translate(Vec(32, 30, 80));
+					}
+					else {
+						m->rotate(45, 1);
+						m->translate(Vec(73, 30, 105));
+					}
+				}
+				break;
+			}
+			if (res != 0) {
+				Sphere* sph = new Sphere(16.5, Vec(33, 16.5, 65), materials[material_choices[i]]);
+				sph->material.roughness = roughness_choices[i];
+				if (i != 0)
+					sph->center = Vec(73, 16.5, 95);
+				add_object(sph);
+			}
 
-		int res = -1;
-		switch (model_choice) {
-		case 0:
-			res = 0;
-			add_object(new Sphere(20.5, Vec(33, 20.5, 65), materials[material_choice]));
-			break;
-		case 1:
-			res = m->load_model("3D models/cube.obj");
-			if (res == 0) {
-				m->scale(15, 15, 15);
-				m->rotate(30, 1);
-				m->translate(Vec(30, 15, 80));
-			}
-			break;
-		case 2:
-			res = m->load_model("3D models/pinetree.obj");
-			if (res == 0) {
-				m->scale(0.2, 0.2, 0.2, false);
-				m->translate(Vec(100, 20, 80));
-			}
-			break;
-		case 3:
-			res = m->load_model("3D models/dog.obj");
-			if (res == 0) {
-				m->rotate(20, 1);
-				m->translate(Vec(30, 0, 60));
-			}
-			break;
-		case 4:
-			res = m->load_model("3D models/skull.obj");
-			if (res == 0) {
-				m->scale(5, 5, 5);
-				m->rotate(30, 1);
-				m->translate(Vec(30, 25, 80));
-			}
-			break;
-		case 5:
-			res = m->load_model("3D models/heart.obj");
-			if (res == 0) {
-				m->scale(2, 2, 2);
-				m->rotate(-90, 0);
-				m->rotate(15, 1);
-				m->translate(Vec(35, 25, 60));
-			}
-			break;
-		case 6:
-			res = m->load_model("3D models/gear.obj");
-			if (res == 0) {
-				m->scale(4, 4, 4);
-				m->rotate(30, 1);
-				m->translate(Vec(32, 18, 85));
-			}
-			break;
-		case 7:
-			res = m->load_model("3D models/GLman02.obj");
-			if (res == 0) {
-				m->scale(0.4, 0.4, 0.4);
-				m->rotate(30, 1);
-				m->translate(Vec(28, -62, 85));
-			}
-			break;
-		case 8:
-			res = m->load_model("3D models/weird_sphere.obj");
-			if (res == 0) {
-				m->scale(25, 25, 25);
-				m->rotate(-45, 1);
-				m->translate(Vec(32, 30, 85));
-			}
-			break;
+			for (auto* f : m->faces)
+				add_object(f);
 		}
-		if (res != 0)
-			add_object(new Sphere(20.5, Vec(33, 20.5, 65), materials[material_choice]));
-
-		/*
-		m->load_model("3D models/triasphere.obj");
-		m->scale(15, 15, 15);
-		m->rotate(30, 1);
-		m->translate(Vec(30, 30, 80));
-		*/
-		/*
-		m->load_model("3D models/utah_teapot_lowpoly.obj");
-		m->scale(40, 40, 40);
-		m->rotate(30, 1);
-		m->translate(Vec(30, 30, 80));
-		*/
-		
-		for (auto* f : m->faces)
-			add_object(f);
 		
 		for (Sphere* l_s : light_sources)
 			add_object(l_s);
@@ -504,14 +553,14 @@ public:
 							double r1 = erand48(Xi), r2 = erand48(Xi);
 							double z1, z2;
 							box_muller(r1, r2, z1, z2);
-							double dx = z1 * sigma, dy = z2 * sigma;
-							dx = std::clamp(dx, -1.0, 1.0);
-							dy = std::clamp(dy, -1.0, 1.0);
+							double offset_x = z1 * sigma, offset_y = z2 * sigma;
+							offset_x = std::clamp(offset_x, -1.0, 1.0);
+							offset_y = std::clamp(offset_y, -1.0, 1.0);
 							*/
-							double r1 = 2 * erand48(Xi), dx = r1 < 1 ? sqrt(r1) - 1 : 1 - sqrt(2 - r1);
-							double r2 = 2 * erand48(Xi), dy = r2 < 1 ? sqrt(r2) - 1 : 1 - sqrt(2 - r2);
-							Vec d = camera_x * (((sx + 0.5 + dx) / 2 + x) / width - 0.5) +
-								camera_y * (((sy + 0.5 + dy) / 2 + y) / height - 0.5) + camera.dir;
+							double r1 = 2 * erand48(Xi), offset_x = r1 < 1 ? sqrt(r1) - 1 : 1 - sqrt(2 - r1);
+							double r2 = 2 * erand48(Xi), offset_y = r2 < 1 ? sqrt(r2) - 1 : 1 - sqrt(2 - r2);
+							Vec d = camera_x * (((sx + 0.5 + offset_x) / 2 + x) / width - 0.5) +
+								camera_y * (((sy + 0.5 + offset_y) / 2 + y) / height - 0.5) + camera.dir;
 							result = result + path_tracing(Ray(camera.orig + d * 140, d.norm()), 0, Xi) * (1.0 / samples);
 						}
 						image[i] = image[i] + Vec(clamp01(result.x), clamp01(result.y), clamp01(result.z)) * 0.25;
@@ -548,14 +597,14 @@ public:
 					double r1 = erand48(Xi), r2 = erand48(Xi);
 					double z1, z2;
 					box_muller(r1, r2, z1, z2);
-					double dx = z1 * sigma, dy = z2 * sigma;
-					dx = std::clamp(dx, -1.0, 1.0);
-					dy = std::clamp(dy, -1.0, 1.0);
+					double offset_x = z1 * sigma, offset_y = z2 * sigma;
+					offset_x = std::clamp(offset_x, -1.0, 1.0);
+					offset_y = std::clamp(offset_y, -1.0, 1.0);
 
-					//double r1 = 2 * erand48(Xi), dx = r1 < 1 ? sqrt(r1) - 1 : 1 - sqrt(2 - r1);
-					//double r2 = 2 * erand48(Xi), dy = r2 < 1 ? sqrt(r2) - 1 : 1 - sqrt(2 - r2);
-					Vec d = camera_x * ((x + dx + 0.5) / width - 0.5) +
-						camera_y * ((y + dy + 0.5) / height - 0.5) + camera.dir;
+					//double r1 = 2 * erand48(Xi), offset_x = r1 < 1 ? sqrt(r1) - 1 : 1 - sqrt(2 - r1);
+					//double r2 = 2 * erand48(Xi), offset_y = r2 < 1 ? sqrt(r2) - 1 : 1 - sqrt(2 - r2);
+					Vec d = camera_x * ((x + offset_x + 0.5) / width - 0.5) +
+						camera_y * ((y + offset_y + 0.5) / height - 0.5) + camera.dir;
 					result = result + path_tracing(Ray(camera.orig + d * 140, d.norm()), 0, Xi) * (1.0 / samples);
 				}
 				image[i] = image[i] + Vec(clamp01(result.x), clamp01(result.y), clamp01(result.z));
@@ -592,29 +641,38 @@ void user_interaction() {
 	std::cout << "       |                 |  |" << std::endl;
 	std::cout << "       |                 |  |" << std::endl;
 	std::cout << "       |                 |  |" << std::endl;
-	std::cout << "       |    ?       o    |  |" << std::endl;
-	std::cout << "       |  Model  Sphere  | /" << std::endl;
+	std::cout << "       |    ?       ?    |  |" << std::endl;
+	std::cout << "       |  Model1  Model2 | /" << std::endl;
 	std::cout << "       |                 |/" << std::endl;
 	std::cout << "       +-----------------+\n" << std::endl;
 
-	std::cout << "Choose a model to load:\n1 - Sphere\n2 - Cube\n3 - Pinetree\n4 - Dog\n5 - Skull\n6 - Heart\n7 - Gear\n8 - Person statue\n9 - Techno-sphere" << std::endl;
-	std::cin >> model_choice;
-	if (model_choice >= 1 && model_choice <= 9)
-		--model_choice;
-	else {
-		std::cout << "Entered incorrect model ID, a sphere will be used." << std::endl;
-		model_choice = 0;
-	}
+	for (int i = 0; i < model_choices.size(); ++i) {
+		std::cout << "Choose model #" << i + 1 << ":\n1 - Sphere\n2 - Cube\n3 - Pinetree\n4 - Dog\n5 - Skull\n6 - Heart\n7 - Gear\n8 - Person statue\n9 - Techno-sphere" << std::endl;
+		std::cin >> model_choices[i];
+		if (model_choices[i] >= 0 && model_choices[i] <= 9)
+			--model_choices[i];
+		else {
+			std::cout << "Entered incorrect model ID, a sphere will be used instead." << std::endl;
+			model_choices[i] = 0;
+		}
 
-	std::cout << "\nChoose a material:\n1 - Diffuse plastic\n2 - Mirror\n3 - Glass\n4 - Frosted glass\n5 - Metal" << std::endl;
-	std::cin >> material_choice;
-	if (material_choice >= 1 && material_choice <= 5)
-		--material_choice;
-	else {
-		std::cout << "Entered incorrect choice, the model will be diffuse.\n" << std::endl;
-		material_choice = 0;
+		std::cout << "\nChoose a material for the model #" << i + 1 << ":\n1 - Diffuse plastic\n2 - Mirror\n3 - Glass\n4 - Frosted glass\n5 - Metal" << std::endl;
+		std::cin >> material_choices[i];
+		if (material_choices[i] >= 1 && material_choices[i] <= 5)
+			--material_choices[i];
+		else {
+			std::cout << "Entered incorrect choice, the model will be diffuse.\n" << std::endl;
+			material_choices[i] = 0;
+		}
+		std::cout << std::endl;
+
+		if (material_choices[i] == 3 || material_choices[i] == 4) {
+			std::cout << "Enter roughness of the material (belongs to [0..1] range): ";
+			std::cin >> roughness_choices[i];
+			roughness_choices[i] = std::clamp(roughness_choices[i], 1e-4, 1.0);
+			std::cout << std::endl;
+		}
 	}
-	std::cout << std::endl;
 }
 
 int main() {

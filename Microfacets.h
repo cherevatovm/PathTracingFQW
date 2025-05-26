@@ -3,7 +3,7 @@
 #define _USE_MATH_DEFINES
 #include "Vec.h"
 
-Vec random_hemisphere_dir(unsigned short* Xi, const Vec& n, double roughness) {
+Vec sample_wm(unsigned short* Xi, const Vec& n, double roughness) {
     double r1 = 2 * M_PI * erand48(Xi);
     double r2 = erand48(Xi);
     double alpha = roughness * roughness;
@@ -40,8 +40,8 @@ inline double D(const Vec& wm, double roughness) {
     if (std::isinf(tan2theta)) return 0;
     double cos4theta = cos_2_theta(wm) * cos_2_theta(wm);
     double alpha2 = roughness * roughness;
-    double e = alpha2 * tan2theta;
-    return 1 / (M_PI * alpha2 * cos4theta * (1 + e) * (1 + e));
+    double e = alpha2 + tan2theta;
+    return alpha2 / (M_PI * cos4theta * e * e);
 }
 
 inline double D(const Vec& w, const Vec& wm, double roughness) { 
@@ -88,18 +88,18 @@ double geom_smith(const Vec& n, const Vec& v, const Vec& l, double roughness) {
 }
 
 double brdf_div_by_pdf(const Vec& n, const Vec& wo, const Vec& wi,
-    const Vec& wm, double roughness, double Fr) {
-    double D_ = ggx_distribution(n, wm, roughness);
+    const Vec& wm, double roughness, double Fr_) {
+    double D_ = D(wm, roughness);
     double G_ = geom_smith(n, wo, wi, roughness);
 
-    double brdf = (D_ * G_ * Fr) / (4.0 * abs(n.dot_prod(wo)) * abs(n.dot_prod(wi)));
+    double brdf = (D_ * G_ * Fr_) / (4.0 * abs(n.dot_prod(wo)) * abs(n.dot_prod(wi)));
     brdf *= std::abs(n.dot_prod(wi));
     double pdf = (D_ * std::max(n.dot_prod(wm), 0.0)) / (4 * std::max(wm.dot_prod(wo), 1e-6));
 
     return brdf / pdf;
 }
 
-double btdf_div_by_pdf(const Vec& n, const Vec& wo, const Vec& wi,
+double btdf_div_by_pdf(const Vec& wo, const Vec& wi,
     const Vec& wm, double roughness, double Tr_, double refr_ratio) {
     double D_ = D(wm, roughness);
     double G_ = G(wo, wi, roughness);
