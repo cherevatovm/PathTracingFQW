@@ -216,16 +216,20 @@ private:
 		else if (inters.object->material.brdf == ROUGH) {
 			double roughness = inters.object->material.roughness;
 			double refr_ind = inters.object->material.refr_ind;
-			
+
 			Vec wo = -r.dir;
 			Vec wm = sample_wm(Xi, nl, roughness);
-			Vec wi = wm * wm.dot_prod(wo) * 2 - wo;	
+			Vec wi = wm * wm.dot_prod(wo) * 2 - wo;
+
 			if (nl.dot_prod(wi) <= 0) return inters.object->emis;
-			
+
+			Vec diffuse = color * (1 - inters.object->material.metal_prop);
 			double Fr = fresnel_schlick(std::max(wm.dot_prod(wo), 0.0),
-				((refr_ind - 1) * (refr_ind - 1)) / ((refr_ind + 1) * (refr_ind + 1)));		
-			return inters.object->emis + color.mult(path_tracing(Ray(inters.hit_point, wi), depth, Xi))
-				* brdf_div_by_pdf(nl, wo, wi, wm, roughness, Fr);
+				((refr_ind - 1) * (refr_ind - 1)) / ((refr_ind + 1) * (refr_ind + 1)));
+			Vec specular = path_tracing(Ray(inters.hit_point, wi), depth, Xi) *
+				brdf_div_by_pdf(nl, wo, wi, wm, roughness, Fr);
+
+			return inters.object->emis + diffuse.mult(specular);
 		}
 		else if (inters.object->material.brdf == ROUGH_DIEL) {
 			double roughness = inters.object->material.roughness;
@@ -322,26 +326,6 @@ public:
 			new Sphere(1e5, Vec(50, 40.8, -1e5 + 170), Material(Vec(0.75, 0.75, 0.75), DIFF)), // Front wall
 			new Sphere(1e5, Vec(50, 1e5, 81.6), Material(Vec(0.75, 0.75, 0.75), DIFF)), // Floor
 			new Sphere(1e5, Vec(50, -1e5 + 81.6, 81.6), Material(Vec(0.75, 0.75, 0.75), DIFF)), // Ceiling
-
-			/*
-			new Triangle(Vec(0, 0, 170), Vec(0, 82.5, 170), Vec(), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
-			new Triangle(Vec(0, 82.5, 170), Vec(0, 82.5, 0), Vec(), Vec(), Vec(0.75, 0.25, 0.25), DIFF), // Left wall
-
-			new Triangle(Vec(99.5, 0, 0), Vec(99.5, 82.5, 0), Vec(99.5, 0, 170), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
-			new Triangle(Vec(99.5, 82.5, 0), Vec(99.5, 82.5, 170), Vec(99.5, 0, 170), Vec(), Vec(0.25, 0.25, 0.75), DIFF), // Right wall
-
-			new Triangle(Vec(), Vec(0, 82.5, 0), Vec(99.5, 0, 0), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
-			new Triangle(Vec(0, 82.5, 0), Vec(99.5, 82.5, 0), Vec(99.5, 0, 0), Vec(), Vec(0.25, 0.75, 0.25), DIFF), // Back wall
-
-			new Triangle(Vec(0, 0, 170), Vec(0, 82.5, 170), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Front wall
-			new Triangle(Vec(0, 82.5, 170), Vec(99.5, 82.5, 170), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Front wall
-
-			new Triangle(Vec(0, 0, 170), Vec(), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
-			new Triangle(Vec(), Vec(99.5, 0, 0), Vec(99.5, 0, 170), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Floor
-
-			new Triangle(Vec(0, 82.5, 0), Vec(0, 82.5, 170), Vec(99.5, 82.5, 0), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
-			new Triangle(Vec(0, 82.5, 170), Vec(99.5, 82.5, 170), Vec(99.5, 82.5, 0), Vec(), Vec(0.75, 0.75, 0.75), DIFF), // Ceiling
-			*/
 		};
 	}
 
@@ -530,7 +514,7 @@ public:
 		Vec camera_x = Vec(width * 0.5135 / height),
 			camera_y = (camera_x % camera.dir).norm() * 0.5135;
 		const int bar_width = 50; // Progress bar width
-		const double sigma = 1.5; // Standard deviation
+		//const double sigma = 1.5; // Standard deviation
 #pragma omp parallel for schedule(dynamic, 1) private(result)       // Use OpenMP 
 		for (int y = 0; y < height; y++) {                       // Go through image rows 
 #pragma omp critical
@@ -549,6 +533,7 @@ public:
 					// 2x2 subpixel cols 
 					for (int sx = 0; sx < 2; sx++, result = Vec()) {
 						for (int s = 0; s < samples; s++) {
+							// For Gaussian filter
 							/*
 							double r1 = erand48(Xi), r2 = erand48(Xi);
 							double z1, z2;
@@ -557,8 +542,10 @@ public:
 							offset_x = std::clamp(offset_x, -1.0, 1.0);
 							offset_y = std::clamp(offset_y, -1.0, 1.0);
 							*/
+
 							double r1 = 2 * erand48(Xi), offset_x = r1 < 1 ? sqrt(r1) - 1 : 1 - sqrt(2 - r1);
 							double r2 = 2 * erand48(Xi), offset_y = r2 < 1 ? sqrt(r2) - 1 : 1 - sqrt(2 - r2);
+							
 							Vec d = camera_x * (((sx + 0.5 + offset_x) / 2 + x) / width - 0.5) +
 								camera_y * (((sy + 0.5 + offset_y) / 2 + y) / height - 0.5) + camera.dir;
 							result = result + path_tracing(Ray(camera.orig + d * 140, d.norm()), 0, Xi) * (1.0 / samples);
@@ -601,8 +588,10 @@ public:
 					offset_x = std::clamp(offset_x, -1.0, 1.0);
 					offset_y = std::clamp(offset_y, -1.0, 1.0);
 
+					// For tent filter
 					//double r1 = 2 * erand48(Xi), offset_x = r1 < 1 ? sqrt(r1) - 1 : 1 - sqrt(2 - r1);
 					//double r2 = 2 * erand48(Xi), offset_y = r2 < 1 ? sqrt(r2) - 1 : 1 - sqrt(2 - r2);
+
 					Vec d = camera_x * ((x + offset_x + 0.5) / width - 0.5) +
 						camera_y * ((y + offset_y + 0.5) / height - 0.5) + camera.dir;
 					result = result + path_tracing(Ray(camera.orig + d * 140, d.norm()), 0, Xi) * (1.0 / samples);
@@ -656,9 +645,9 @@ void user_interaction() {
 			model_choices[i] = 0;
 		}
 
-		std::cout << "\nChoose a material for the model #" << i + 1 << ":\n1 - Diffuse plastic\n2 - Mirror\n3 - Glass\n4 - Frosted glass\n5 - Metal" << std::endl;
+		std::cout << "\nChoose a material for the model #" << i + 1 << ":\n1 - Diffuse\n2 - Mirror\n3 - Glass\n4 - Frosted glass\n5 - Ruby\n6 - Gold\n7 - Iron" << std::endl;
 		std::cin >> material_choices[i];
-		if (material_choices[i] >= 1 && material_choices[i] <= 5)
+		if (material_choices[i] >= 1 && material_choices[i] <= 7)
 			--material_choices[i];
 		else {
 			std::cout << "Entered incorrect choice, the model will be diffuse.\n" << std::endl;
@@ -666,7 +655,7 @@ void user_interaction() {
 		}
 		std::cout << std::endl;
 
-		if (material_choices[i] == 3 || material_choices[i] == 4) {
+		if (material_choices[i] >= 3 && material_choices[i] <= 6) {
 			std::cout << "Enter roughness of the material (belongs to [0..1] range): ";
 			std::cin >> roughness_choices[i];
 			roughness_choices[i] = std::clamp(roughness_choices[i], 1e-4, 1.0);

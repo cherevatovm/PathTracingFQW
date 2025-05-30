@@ -19,23 +19,17 @@ class Shape {
 public:
 	Material material;
 	Vec emis;
-	const Transform* render_obj, *obj_render;
 
 	Shape() = default;
 
-	Shape(Material material_, Vec emis_ = Vec(),
-		const Transform* render_obj_ = nullptr, 
-		const Transform* obj_render_ = nullptr) :
-		material(material_), emis(emis_), 
-		render_obj(render_obj_), obj_render(obj_render_) {};
+	Shape(Material material_, Vec emis_ = Vec()) :
+		material(material_), emis(emis_) {};
 
 	virtual Intersection intersect(const Ray& r) const = 0;
 	
 	virtual Bounds3 get_bounds() const = 0;
 
 	virtual Vec get_normal(const Intersection& inters) const = 0;
-
-	virtual Vec shape_sample(double u0, double u1) const = 0;
 };
 
 class Sphere : public Shape {
@@ -46,10 +40,8 @@ public:
 	Sphere() = default;
 
 	Sphere(double radius_, Vec center_, 
-		Material material_, Vec emis_ = Vec(),
-		const Transform* render_obj_ = nullptr, 
-		const Transform* obj_render_ = nullptr) : 
-		Shape(material_, emis_, render_obj_, obj_render_),
+		Material material_, Vec emis_ = Vec()) : 
+		Shape(material_, emis_),
 		radius(radius_), center(center_) {};
 
 	Sphere& operator=(const Sphere& sph) {
@@ -57,8 +49,6 @@ public:
 		radius = sph.radius;
 		material = sph.material;
 		emis = sph.emis;
-		render_obj = sph.render_obj;
-		obj_render = sph.obj_render;
 		return *this;
 	}
 
@@ -84,86 +74,8 @@ public:
 	}
 
 	Bounds3 get_bounds() const override {
-		return //render_obj->transform_bounds(Bounds3(
-			Bounds3(Vec(center.x - radius, center.y - radius, center.z - radius), 
+		return Bounds3(Vec(center.x - radius, center.y - radius, center.z - radius), 
 			Vec(center.x + radius, center.y + radius, center.z + radius));
-	}
-
-	Vec shape_sample(double u0, double u1) const override {
-		return Vec();
-	}
-};
-
-class Triangle : public Shape {
-public:
-	Vec vert1, vert2, vert3;
-	Vec normal;
-
-	Triangle() = default;
-
-	Triangle(Vec vert1_, Vec vert2_, Vec vert3_,
-		Material material_, Vec emis_ = Vec(),
-		const Transform* render_obj_ = nullptr,
-		const Transform* obj_render_ = nullptr) : 
-		Shape(material_, emis_, render_obj_, obj_render_),
-		vert1(vert1_), vert2(vert2_), vert3(vert3_),
-		normal(((vert2_ - vert1_) % (vert3_ - vert1_)).norm()) {
-	}
-
-	Triangle& operator=(const Triangle& t) {
-		vert1 = t.vert1;
-		vert2 = t.vert2;
-		vert3 = t.vert3;
-		normal = t.normal;
-		material = t.material;
-		emis = t.emis;
-		render_obj = t.render_obj;
-		obj_render = t.obj_render;
-		return *this;
-	}
-
-	Intersection intersect(const Ray& r) const override {
-		double denominator = normal.dot_prod(r.dir);
-		if (fabs(denominator) < eps)
-			return Intersection();
-
-		Vec ao = r.orig - vert1;
-		double t = normal.dot_prod(ao) / denominator;
-		t = -t;
-		if (t < eps)
-			return Intersection();
-
-		Vec intersect = r.orig + r.dir * t;
-
-		Vec v0 = vert2 - vert1;
-		Vec v1 = vert3 - vert1;
-		Vec v2 = intersect - vert1;
-
-		double d00 = v0.dot_prod(v0);
-		double d01 = v0.dot_prod(v1);
-		double d11 = v1.dot_prod(v1);
-		double d20 = v2.dot_prod(v0);
-		double d21 = v2.dot_prod(v1);
-
-		double denom = d00 * d11 - d01 * d01;
-		double v = (d11 * d20 - d01 * d21) / denom;
-		double w = (d00 * d21 - d01 * d20) / denom;
-		double u = 1.0 - v - w;
-
-		if (u >= 0 && v >= 0 && w >= 0)
-			return Intersection(t, this);
-
-		return Intersection();
-	}
-
-	Vec get_normal(const Intersection& inters) const override { return normal; }
-
-	Bounds3 get_bounds() const override { 
-		return Bounds3::find_union(Bounds3(vert1, vert2), vert3); 
-	}
-
-	Vec shape_sample(double u0, double u1) const override {
-		return Vec();
 	}
 };
 
@@ -179,17 +91,14 @@ private:
 
 		MeshTriangle() = default;
 
-		MeshTriangle(const Mesh* mesh_, Material material_,
-			const Transform* render_obj_ = nullptr, 
-			const Transform* obj_render_ = nullptr) : 
-			Shape(material_, Vec(), render_obj_, obj_render_), mesh(mesh_) {}
+		MeshTriangle(const Mesh* mesh_, Material material_) : 
+			Shape(material_, Vec()), mesh(mesh_) {}
 
 		MeshTriangle(const Mesh* mesh_,
 			uint v1_ind_, uint v2_ind_, uint v3_ind_,
 			Material material_, Vec emis_ = Vec(),
-			uint v1_n_ind_ = UINT_MAX, uint v2_n_ind_ = UINT_MAX, uint v3_n_ind_ = UINT_MAX,
-			const Transform* render_obj_ = nullptr, const Transform* obj_render_ = nullptr) :
-			Shape(material_, emis_, render_obj_, obj_render_), mesh(mesh_),
+			uint v1_n_ind_ = UINT_MAX, uint v2_n_ind_ = UINT_MAX, uint v3_n_ind_ = UINT_MAX) :
+			Shape(material_, emis_), mesh(mesh_),
 			vert0_ind(v1_ind_), vert1_ind(v2_ind_), vert2_ind(v3_ind_),
 			vert0_norm_ind(v1_n_ind_), vert1_norm_ind(v2_n_ind_), vert2_norm_ind(v3_n_ind_) 
 		{
@@ -207,8 +116,6 @@ private:
 			vert2_norm_ind = t.vert2_norm_ind;
 			material = t.material;
 			emis = t.emis;
-			render_obj = t.render_obj;
-			obj_render = t.obj_render;
 			return *this;
 		}
 
@@ -291,10 +198,6 @@ private:
 			p_max += Vec(eps, eps, eps);
 
 			return Bounds3(p_min, p_max);
-		}
-
-		Vec shape_sample(double u0, double u1) const override {
-			return Vec();
 		}
 
 		Vec compute_barycentric_coords(const Vec& hit_point) const {

@@ -7,8 +7,6 @@ Vec sample_wm(unsigned short* Xi, const Vec& n, double roughness) {
     double r1 = 2 * M_PI * erand48(Xi);
     double r2 = erand48(Xi);
     double alpha = roughness * roughness;
-
-    //double theta = atan(sqrt(-alpha * log(1.0 - r2)));
     double theta = atan(alpha * sqrt(r2) / sqrt(1 - r2));
     double phi = r1;
 

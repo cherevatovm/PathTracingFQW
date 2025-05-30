@@ -36,6 +36,10 @@ inline double diff_of_products(double a, double b, double c, double d) {
 	return diff_of_prod + err;
 }
 
+inline double lerp(double x, double a, double b) {
+	return (1 - x) * a + x * b;
+}
+
 // Gaussian Random Number Generation (Box-Muller transform)
 void box_muller(double u1, double u2, double& z0, double& z1) {
 	double r = sqrt(-2.0 * log(u1));
